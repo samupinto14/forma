@@ -8,7 +8,7 @@
 //! Missing normals are then computed as smooth per-position normals.
 
 use rayon::prelude::*;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -86,6 +86,10 @@ pub struct LoadResult {
     pub chunks: Vec<Chunk>,
     pub materials: Vec<Material>,
     pub stats: MeshStats,
+    /// Which way is up, judged from the surfaces (mostly the ground on a scan). None when unclear.
+    pub up: Option<[f32; 3]>,
+    /// Light version of the mesh, drawn while the view moves.
+    pub proxy: Vec<Chunk>,
     pub min: [f32; 3],
     pub max: [f32; 3],
 }
@@ -311,7 +315,7 @@ fn pack_n(n: [f32; 3]) -> [i16; 4] {
 
 // ---------------------------------------------------------------- main entry
 
-pub fn load(path: &Path, progress: &Progress, tex: TexLimit) -> Result<LoadResult, String> {
+pub fn load(path: &Path, progress: &Progress, tex: TexLimit, proxy_tris: u64) -> Result<LoadResult, String> {
     let t0 = std::time::Instant::now();
     let file = std::fs::File::open(path).map_err(|e| format!("Could not open the file: {e}"))?;
     let mmap = unsafe { memmap2::Mmap::map(&file) }.map_err(|e| format!("Could not read the file: {e}"))?;
@@ -544,13 +548,15 @@ pub fn load(path: &Path, progress: &Progress, tex: TexLimit) -> Result<LoadResul
         tris: u64,
         degenerate: u64,
         invalid: u64,
+        nsum: [f64; 3],
+        nabs: f64,
     }
     let outs: Vec<FaceOut> = (0..ranges.len())
         .into_par_iter()
         .map(|r| {
             let (s, e) = ranges[r];
             let (mut cv, mut ct, mut cn) = (v_off[r], t_off[r], n_off[r]);
-            let mut out = FaceOut { pieces: Vec::new(), tris: 0, degenerate: 0, invalid: 0 };
+            let mut out = FaceOut { pieces: Vec::new(), tris: 0, degenerate: 0, invalid: 0, nsum: [0.0; 3], nabs: 0.0 };
             let mut bld = Builder::new(start_mat[r]);
             let mut corners: Vec<(u32, u32, u32)> = Vec::with_capacity(16);
             for l in lines(&data[s..e]) {
@@ -661,8 +667,22 @@ pub fn load(path: &Path, progress: &Progress, tex: TexLimit) -> Result<LoadResul
                             let u = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
                             let w = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]];
                             let cr = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]];
-                            if cr[0] * cr[0] + cr[1] * cr[1] + cr[2] * cr[2] < degen_eps {
+                            let len2 = cr[0] * cr[0] + cr[1] * cr[1] + cr[2] * cr[2];
+                            if len2 < degen_eps {
                                 out.degenerate += 1;
+                            } else {
+                                // area-weighted facing, turned to agree with the file's normals when it has them
+                                let fnrm = corners[0].2;
+                                let sgn = if fnrm != u32::MAX {
+                                    let f = normals[fnrm as usize];
+                                    if cr[0] * f[0] + cr[1] * f[1] + cr[2] * f[2] < 0.0 { -1.0 } else { 1.0 }
+                                } else {
+                                    1.0
+                                };
+                                for q in 0..3 {
+                                    out.nsum[q] += (cr[q] * sgn) as f64;
+                                }
+                                out.nabs += (len2 as f64).sqrt();
                             }
                             bld.idx.extend_from_slice(&[i0, i1, i2]);
                             out.tris += 1;
@@ -687,6 +707,24 @@ pub fn load(path: &Path, progress: &Progress, tex: TexLimit) -> Result<LoadResul
         ..Default::default()
     };
     let mut raw: Vec<RawPiece> = Vec::new();
+    let (mut nsum, mut nabs) = ([0f64; 3], 0f64);
+    for o in &outs {
+        for q in 0..3 {
+            nsum[q] += o.nsum[q];
+        }
+        nabs += o.nabs;
+    }
+    let up = {
+        let a = (0..3).max_by(|&i, &j| nsum[i].abs().partial_cmp(&nsum[j].abs()).unwrap_or(std::cmp::Ordering::Equal)).unwrap_or(1);
+        if nabs > 0.0 && nsum[a].abs() > 0.2 * nabs {
+            let mut v = [0f32; 3];
+            v[a] = nsum[a].signum() as f32;
+            Some(v)
+        } else {
+            None
+        }
+    };
+    crate::log::line(&format!("up axis from surfaces: {:?} (facing sum {:?}, total {:.3e})", up, nsum, nabs));
     for o in outs {
         stats.tris += o.tris;
         stats.degenerate += o.degenerate;
@@ -731,6 +769,9 @@ pub fn load(path: &Path, progress: &Progress, tex: TexLimit) -> Result<LoadResul
     drop(normals);
 
     let chunks: Vec<Chunk> = raw.into_iter().map(|p| p.chunk).collect();
+    progress.stage("Building light version for moving");
+    let proxy = build_proxy(&chunks, mn, mx, proxy_tris);
+    crate::log::line(&format!("light version: {} triangles", proxy.iter().map(|c| c.idx.len() / 3).sum::<usize>()));
     stats.pieces = chunks.len() as u64;
     stats.pieces_without_uv = chunks.iter().filter(|c| c.uv.is_none()).count() as u64;
     stats.gpu_verts = chunks.iter().map(|c| c.pos.len() as u64).sum();
@@ -869,9 +910,77 @@ pub fn load(path: &Path, progress: &Progress, tex: TexLimit) -> Result<LoadResul
         chunks,
         materials,
         stats,
+        up,
+        proxy,
         min: mn,
         max: mx,
     })
+}
+
+/// A light stand-in for navigation: vertices are merged on a 3D grid and triangles that collapse or repeat
+/// are dropped. The grid is refined or coarsened until the result is close to `target` triangles.
+fn build_proxy(chunks: &[Chunk], mn: [f32; 3], mx: [f32; 3], target: u64) -> Vec<Chunk> {
+    let total: u64 = chunks.iter().map(|c| c.idx.len() as u64 / 3).sum();
+    if target == 0 || total <= target {
+        return Vec::new();
+    }
+    let ext = (0..3).map(|k| mx[k] - mn[k]).fold(0f32, f32::max).max(1e-9);
+    let mut g = 1024f32;
+    let mut best = Vec::new();
+    for _ in 0..4 {
+        let cs = ext / g;
+        let out: Vec<Chunk> = chunks.par_iter().filter_map(|c| cluster(c, mn, cs)).collect();
+        let n: u64 = out.iter().map(|c| c.idx.len() as u64 / 3).sum();
+        best = out;
+        if (n as f64) <= target as f64 * 1.3 || n == 0 {
+            break;
+        }
+        g = (g * (target as f64 / n as f64).sqrt() as f32).max(48.0);
+    }
+    best
+}
+
+fn cluster(c: &Chunk, mn: [f32; 3], cs: f32) -> Option<Chunk> {
+    let mut map: FxHashMap<(i32, i32, i32), u32> = FxHashMap::default();
+    let mut remap = Vec::with_capacity(c.pos.len());
+    let (mut pos, mut nacc, mut uv) = (Vec::new(), Vec::<[f32; 3]>::new(), Vec::new());
+    for (i, p) in c.pos.iter().enumerate() {
+        let key = (((p[0] - mn[0]) / cs) as i32, ((p[1] - mn[1]) / cs) as i32, ((p[2] - mn[2]) / cs) as i32);
+        let id = *map.entry(key).or_insert_with(|| {
+            let id = pos.len() as u32;
+            pos.push(*p);
+            nacc.push([0.0; 3]);
+            if let Some(u) = &c.uv {
+                uv.push(u[i]);
+            }
+            id
+        });
+        let n = c.nrm[i];
+        let a = &mut nacc[id as usize];
+        a[0] += n[0] as f32;
+        a[1] += n[1] as f32;
+        a[2] += n[2] as f32;
+        remap.push(id);
+    }
+    let mut seen: FxHashSet<(u32, u32, u32)> = FxHashSet::default();
+    let mut idx = Vec::new();
+    for t in c.idx.chunks_exact(3) {
+        let (a, b, d) = (remap[t[0] as usize], remap[t[1] as usize], remap[t[2] as usize]);
+        if a == b || b == d || a == d {
+            continue;
+        }
+        let mut s = [a, b, d];
+        s.sort_unstable();
+        if !seen.insert((s[0], s[1], s[2])) {
+            continue;
+        }
+        idx.extend_from_slice(&[a, b, d]);
+    }
+    if idx.is_empty() {
+        return None;
+    }
+    let nrm = nacc.iter().map(|n| pack_n(*n)).collect();
+    Some(Chunk { pos, nrm, uv: c.uv.as_ref().map(|_| uv), idx, material: c.material })
 }
 
 /// Halve an RGBA8 image with a 2x2 box filter.

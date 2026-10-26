@@ -42,7 +42,7 @@ pub fn run(obj: &str, out: &str) -> Result<(), String> {
     .map_err(|e| format!("device: {e}"))?;
 
     let progress = Progress::default();
-    let mut data = loader::load(Path::new(obj), &progress, loader::TexLimit { budget: std::env::var("FORMA_TEX_BUDGET").ok().and_then(|v| v.parse().ok()), ..Default::default() })?;
+    let mut data = loader::load(Path::new(obj), &progress, loader::TexLimit { budget: std::env::var("FORMA_TEX_BUDGET").ok().and_then(|v| v.parse().ok()), ..Default::default() }, 1_500_000)?;
     let st = &data.stats;
     report += &format!(
         "file: {} ({} bytes)\nload: {:.2} s\ntriangles: {}\nvertices: {}\ngpu vertices: {}\npieces: {}\nuvs: {} normals: {}\ndegenerate: {} invalid: {}\npieces without uv: {}\nmaterials: {}\n",
@@ -62,6 +62,7 @@ pub fn run(obj: &str, out: &str) -> Result<(), String> {
         );
     }
 
+    report += &format!("up axis: {:?}\nlight version: {} triangles\n", data.up, data.proxy.iter().map(|c| c.idx.len() / 3).sum::<usize>());
     let t0 = std::time::Instant::now();
     let mut r = Renderer::new(&device, &queue);
     let mesh = r.upload(&device, &queue, &mut data);
@@ -111,12 +112,26 @@ pub fn run(obj: &str, out: &str) -> Result<(), String> {
             shape_col: hex_linear([0x11, 0x13, 0x15], 1.0),
         };
         let t1 = std::time::Instant::now();
-        r.render(&device, &queue, None, [w, h], &g, hex_linear([0x3a, 0x3d, 0x42], 1.0), Some(&mesh), true);
+        r.render(&device, &queue, None, [w, h], &g, hex_linear([0x3a, 0x3d, 0x42], 1.0), Some(&mesh), true, false);
         let (pw, ph, px) = r.read_pixels(&device, &queue).ok_or("no frame")?;
         report += &format!("render {name}: {:.0} ms\n", t1.elapsed().as_secs_f32() * 1000.0);
         image::save_buffer(format!("{out}_{name}.png"), &px, pw, ph, image::ExtendedColorType::Rgba8).map_err(|e| e.to_string())?;
     }
 
+    {
+        let g = Globals {
+            mvp: vp.to_cols_array_2d(),
+            vp: vp.to_cols_array_2d(),
+            model: Mat4::IDENTITY.to_cols_array_2d(),
+            key_dir: [kd.x, kd.y, kd.z, 0.0],
+            key: [1.6, 0.6, 0.0, 0.0],
+            params: [1.0, 8.0, 0.0, 0.0],
+            shape_col: hex_linear([0x11, 0x13, 0x15], 1.0),
+        };
+        r.render(&device, &queue, None, [w, h], &g, hex_linear([0x3a, 0x3d, 0x42], 1.0), Some(&mesh), true, true);
+        let (pw, ph, px) = r.read_pixels(&device, &queue).ok_or("no frame")?;
+        image::save_buffer(format!("{out}_light.png"), &px, pw, ph, image::ExtendedColorType::Rgba8).map_err(|e| e.to_string())?;
+    }
     let mut f = std::fs::OpenOptions::new().create(true).append(true).open(format!("{out}_report.txt")).map_err(|e| e.to_string())?;
     f.write_all(report.as_bytes()).map_err(|e| e.to_string())?;
     Ok(())

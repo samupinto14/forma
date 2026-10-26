@@ -57,6 +57,8 @@ pub struct GpuMesh {
     pub texture_bytes: u64,
     pub shown_tris: u64,
     pub complete: bool,
+    proxy: Vec<GpuChunk>,
+    pub proxy_tris: u64,
 }
 
 struct Targets {
@@ -302,7 +304,7 @@ impl Renderer {
             queue.write_buffer(&b, 0, bytes);
             b
         };
-        let mut mesh = GpuMesh { chunks: Vec::new(), materials: Vec::new(), geometry_bytes: 0, texture_bytes: 0, shown_tris: 0, complete: true };
+        let mut mesh = GpuMesh { chunks: Vec::new(), materials: Vec::new(), geometry_bytes: 0, texture_bytes: 0, shown_tris: 0, complete: true, proxy: Vec::new(), proxy_tris: 0 };
         let mut pending = 0u64;
         let nmat = data.materials.len().max(1);
         for c in std::mem::take(&mut data.chunks) {
@@ -332,6 +334,27 @@ impl Renderer {
             }
         }
         flush();
+        // the light version for moving around; skipped if the full mesh did not fit
+        if mesh.complete {
+            for c in std::mem::take(&mut data.proxy) {
+                let mut made = None;
+                let ok = checked(&mut || {
+                    let pos = buffer("pos", bytemuck::cast_slice(&c.pos), wgpu::BufferUsages::VERTEX);
+                    let nrm = buffer("nrm", bytemuck::cast_slice(&c.nrm), wgpu::BufferUsages::VERTEX);
+                    let uv = c.uv.as_ref().map(|u| buffer("uv", bytemuck::cast_slice(u), wgpu::BufferUsages::VERTEX));
+                    let idx = buffer("idx", bytemuck::cast_slice(&c.idx), wgpu::BufferUsages::INDEX);
+                    made = Some(GpuChunk { pos, nrm, uv, idx, count: c.idx.len() as u32, material: c.material.min(nmat - 1) });
+                });
+                if !ok {
+                    mesh.proxy.clear();
+                    mesh.proxy_tris = 0;
+                    break;
+                }
+                mesh.proxy_tris += (c.idx.len() / 3) as u64;
+                mesh.proxy.push(made.unwrap());
+            }
+            flush();
+        }
         for m in data.materials.iter_mut() {
             let mut view = None;
             if let Some(t) = &m.texture {
@@ -449,6 +472,7 @@ impl Renderer {
         clear: [f32; 4],
         mesh: Option<&GpuMesh>,
         show_lines: bool,
+        use_proxy: bool,
     ) {
         self.ensure_targets(device, egui_r, size);
         let t = self.targets.as_ref().unwrap();
@@ -475,7 +499,8 @@ impl Renderer {
             });
             pass.set_bind_group(0, &self.globals_bind, &[]);
             if let Some(mesh) = mesh {
-                for c in &mesh.chunks {
+                let list = if use_proxy && !mesh.proxy.is_empty() { &mesh.proxy } else { &mesh.chunks };
+                for c in list {
                     match &c.uv {
                         Some(uv) => {
                             pass.set_pipeline(&self.mesh_uv);

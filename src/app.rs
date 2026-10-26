@@ -24,6 +24,8 @@ const WARN: Color32 = Color32::from_rgb(0xe9, 0xa2, 0x3b);
 const BAD: Color32 = Color32::from_rgb(0xef, 0x6a, 0x5e);
 
 const ROT: f32 = 0.006;
+// new key from 5.0.0-alpha.5, so everyone starts from the new defaults (Auto orientation, no axis swap)
+const SETTINGS_KEY: &str = "forma-settings-2";
 const TIERS: [&str; 3] = ["High", "Mid", "Low"];
 
 #[derive(Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -55,6 +57,7 @@ enum TexSize {
 
 #[derive(Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 enum Orient {
+    Auto,
     Flat,
     File,
     ZUp,
@@ -66,6 +69,8 @@ struct Settings {
     budgets: [[u64; 2]; 3],
     gpu_gb: u32,
     swap_xy: bool,
+    flip: bool,
+    light_moving: bool,
     orient: Orient,
     mode: Mode,
     grid: bool,
@@ -83,8 +88,10 @@ impl Default for Settings {
         Settings {
             budgets: [[35_000_000, 8192], [5_000_000, 8192], [500_000, 2048]],
             gpu_gb: 24,
-            swap_xy: true,
-            orient: Orient::Flat,
+            swap_xy: false,
+            flip: false,
+            light_moving: true,
+            orient: Orient::Auto,
             mode: Mode::Grey,
             grid: true,
             axes: true,
@@ -120,6 +127,8 @@ struct Version {
     materials: usize,
     complete: bool,
     shown_tris: u64,
+    up: Option<Vec3>,
+    proxy_tris: u64,
 }
 
 #[derive(Default)]
@@ -181,12 +190,15 @@ pub struct FormaApp {
     drag_t: Instant,
     rendered_key: Option<(usize, usize)>,
     gpu_kind: Option<eframe::wgpu::DeviceType>,
+    last_cam: Option<(Vec3, Quat)>,
+    moving_until: Instant,
+    drew_light: bool,
 }
 
 impl FormaApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         style(&cc.egui_ctx);
-        let s: Settings = cc.storage.and_then(|st| eframe::get_value(st, eframe::APP_KEY)).unwrap_or_default();
+        let s: Settings = cc.storage.and_then(|st| eframe::get_value(st, SETTINGS_KEY)).unwrap_or_default();
         let gpu_error = Arc::new(AtomicBool::new(false));
         let renderer = cc.wgpu_render_state.as_ref().map(|rs| {
             let flag = gpu_error.clone();
@@ -229,6 +241,9 @@ impl FormaApp {
             drag_t: Instant::now(),
             rendered_key: None,
             gpu_kind: cc.wgpu_render_state.as_ref().map(|rs| rs.adapter.get_info().device_type),
+            last_cam: None,
+            moving_until: Instant::now(),
+            drew_light: false,
         }
     }
 
@@ -274,8 +289,10 @@ impl FormaApp {
         let p2 = progress.clone();
         let path2 = path.clone();
         let limit = self.tex_limit();
+        let integrated = matches!(self.gpu_kind, Some(eframe::wgpu::DeviceType::IntegratedGpu) | Some(eframe::wgpu::DeviceType::Cpu));
+        let proxy_tris: u64 = if integrated { 1_500_000 } else { 6_000_000 };
         std::thread::spawn(move || {
-            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| loader::load(&path2, &p2, limit)))
+            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| loader::load(&path2, &p2, limit, proxy_tris)))
                 .unwrap_or_else(|_| Err("The loader stopped unexpectedly. The file may be damaged or too large for this computer's memory.".into()));
             let _ = tx.send(r);
         });
@@ -297,7 +314,7 @@ impl FormaApp {
 
                 crate::log::line(&format!("upload start: {} pieces, memory {:?}", data.chunks.len(), crate::log::memory().map(|m| crate::log::gb(m.0))));
                 let gpu = r.upload(&rs.device, &rs.queue, &mut data);
-                let (gpu_complete, shown_tris) = (gpu.complete, gpu.shown_tris);
+                let (gpu_complete, shown_tris, proxy_tris) = (gpu.complete, gpu.shown_tris, gpu.proxy_tris);
                 let textures: Vec<TexInfo> = data
                     .materials
                     .iter()
@@ -326,6 +343,8 @@ impl FormaApp {
                     materials: data.materials.len().saturating_sub(1),
                     complete: gpu_complete,
                     shown_tris,
+                    up: data.up.map(Vec3::from),
+                    proxy_tris,
                 });
                 tier.cur = tier.versions.len() - 1;
                 drop(data);
@@ -354,12 +373,26 @@ impl FormaApp {
         } else {
             Mat3::IDENTITY
         };
-        let (mn, mx) = match self.current() {
-            Some(v) => (v.min, v.max),
-            None => (Vec3::splat(-1.0), Vec3::splat(1.0)),
+        let (mn, mx, up) = match self.current() {
+            Some(v) => (v.min, v.max, v.up),
+            None => (Vec3::splat(-1.0), Vec3::splat(1.0), None),
         };
         let size_after = aabb(Mat4::from_mat3(swap), mn, mx).1 - aabb(Mat4::from_mat3(swap), mn, mx).0;
-        let rot = match self.s.orient {
+        let lay_flat = |s: Vec3| {
+            if s.x < s.y && s.x <= s.z {
+                Mat3::from_rotation_z(std::f32::consts::FRAC_PI_2)
+            } else if s.z < s.y && s.z < s.x {
+                Mat3::from_rotation_x(-std::f32::consts::FRAC_PI_2)
+            } else {
+                Mat3::IDENTITY
+            }
+        };
+        let mut rot = match self.s.orient {
+            // turn the direction most surfaces face (the ground, on a scan) to point up
+            Orient::Auto => match up {
+                Some(u) => Mat3::from_quat(Quat::from_rotation_arc((swap * u).normalize(), Vec3::Y)),
+                None => lay_flat(size_after),
+            },
             Orient::File => Mat3::IDENTITY,
             Orient::ZUp => Mat3::from_rotation_x(-std::f32::consts::FRAC_PI_2),
             Orient::Flat => {
@@ -373,6 +406,9 @@ impl FormaApp {
                 }
             }
         };
+        if self.s.flip {
+            rot = Mat3::from_rotation_x(std::f32::consts::PI) * rot;
+        }
         self.model = Mat4::from_mat3(rot * swap);
     }
 
@@ -558,7 +594,7 @@ impl FormaApp {
 
 impl eframe::App for FormaApp {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        eframe::set_value(storage, eframe::APP_KEY, &self.s);
+        eframe::set_value(storage, SETTINGS_KEY, &self.s);
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
@@ -701,13 +737,17 @@ impl eframe::App for FormaApp {
                     }
                 });
                 egui::ComboBox::from_label("Orientation")
-                    .selected_text(match self.s.orient { Orient::Flat => "Lay flat", Orient::File => "As in file", Orient::ZUp => "Z up" })
+                    .selected_text(match self.s.orient { Orient::Auto => "Auto", Orient::Flat => "Lay flat", Orient::File => "As in file", Orient::ZUp => "Z up" })
                     .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.s.orient, Orient::Auto, "Auto, find which way is up");
                         ui.selectable_value(&mut self.s.orient, Orient::Flat, "Lay flat");
                         ui.selectable_value(&mut self.s.orient, Orient::File, "As in file");
                         ui.selectable_value(&mut self.s.orient, Orient::ZUp, "Z up");
                     });
+                ui.checkbox(&mut self.s.flip, "Upside down");
                 ui.checkbox(&mut self.s.swap_xy, "Swap X and Y");
+                ui.checkbox(&mut self.s.light_moving, "Light version while moving")
+                    .on_hover_text("Draws a lighter copy of heavy models while the view moves, and full detail as soon as it stops.");
                 ui.label(RichText::new("Drag to orbit around the model centre, right-drag to pan. W A S D to move, Q and E for down and up, hold Shift to go faster. Scroll moves forward and back, Ctrl + scroll zooms to the cursor.").size(11.5).color(MUTED));
                 ui.add_space(12.0);
                 heading(ui, "LIGHTING");
@@ -766,6 +806,9 @@ impl eframe::App for FormaApp {
                     kv(ui, "Materials", &fmt(v.materials as u64));
                     let s = v.max - v.min;
                     kv(ui, "Bounds X × Y × Z", &format!("{} × {} × {}", num(s.x), num(s.y), num(s.z)));
+                    if v.proxy_tris > 0 {
+                        kv(ui, "Light version", &format!("{} tris", fmt(v.proxy_tris)));
+                    }
                     kv(ui, "GPU geometry", &bytes(v.gpu.geometry_bytes));
                     kv(ui, "File size", &bytes(v.stats.file_bytes));
                     kv(ui, "Load time", &format!("{:.1} s", v.stats.seconds));
@@ -924,7 +967,7 @@ impl eframe::App for FormaApp {
 
             // settings that change the scene setup
             if let Some(rs) = rs.as_ref() {
-                if before.swap_xy != self.s.swap_xy || before.orient != self.s.orient {
+                if before.swap_xy != self.s.swap_xy || before.orient != self.s.orient || before.flip != self.s.flip {
                     want_reframe = Some(false);
                 }
                 if before.grid != self.s.grid || before.axes != self.s.axes {
@@ -939,6 +982,18 @@ impl eframe::App for FormaApp {
             }
             let key = (self.active, self.tiers[self.active].cur);
             if self.rendered_key != Some(key) {
+                self.dirty = true;
+            }
+            // while the camera moves, draw the light version; once it has been still briefly, redraw in full
+            let cam_now = (self.cam.pos, self.cam.rot);
+            if Some(cam_now) != self.last_cam {
+                self.last_cam = Some(cam_now);
+                self.moving_until = Instant::now() + std::time::Duration::from_millis(160);
+            }
+            let use_light = self.s.light_moving && Instant::now() < self.moving_until;
+            if use_light {
+                ctx.request_repaint_after(std::time::Duration::from_millis(170));
+            } else if self.drew_light {
                 self.dirty = true;
             }
 
@@ -968,7 +1023,8 @@ impl eframe::App for FormaApp {
                     let clear = hex_linear(bgc, 1.0);
                     let t = &self.tiers[self.active];
                     let mesh = t.versions.get(t.cur).map(|v| &v.gpu);
-                    r.render(&rs.device, &rs.queue, Some(&*rs.renderer), px, &g, clear, mesh, self.s.grid || self.s.axes);
+                    r.render(&rs.device, &rs.queue, Some(&*rs.renderer), px, &g, clear, mesh, self.s.grid || self.s.axes, use_light);
+                    self.drew_light = use_light && mesh.map(|m| m.proxy_tris > 0).unwrap_or(false);
                     self.rendered_key = Some(key);
                 }
                 self.dirty = false;
