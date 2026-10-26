@@ -45,6 +45,15 @@ const MODES: [(Mode, &str); 6] = [
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+enum TexSize {
+    Auto,
+    Full,
+    Half,
+    Quarter,
+    Off,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 enum Orient {
     Flat,
     File,
@@ -67,6 +76,7 @@ struct Settings {
     fill: f32,
     bg: usize,
     checker: f32,
+    tex_size: TexSize,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -84,6 +94,7 @@ impl Default for Settings {
             fill: 0.6,
             bg: 0,
             checker: 8.0,
+            tex_size: TexSize::Auto,
         }
     }
 }
@@ -93,6 +104,7 @@ struct TexInfo {
     name: String,
     w: u32,
     h: u32,
+    ow: u32,
     bytes: u64,
     problem: Option<String>,
 }
@@ -106,6 +118,8 @@ struct Version {
     max: Vec3,
     textures: Vec<TexInfo>,
     materials: usize,
+    complete: bool,
+    shown_tris: u64,
 }
 
 #[derive(Default)]
@@ -166,6 +180,7 @@ pub struct FormaApp {
     last_t: Instant,
     drag_t: Instant,
     rendered_key: Option<(usize, usize)>,
+    gpu_kind: Option<eframe::wgpu::DeviceType>,
 }
 
 impl FormaApp {
@@ -178,8 +193,16 @@ impl FormaApp {
             let info = rs.adapter.get_info();
             crate::log::line(&format!("Forma {} on {} ({:?}, {:?}), memory {:?}", crate::VERSION, info.name, info.backend, info.device_type, crate::log::memory().map(|m| (crate::log::gb(m.0), crate::log::gb(m.2)))));
             rs.device.on_uncaptured_error(Box::new(move |e| {
-                crate::log::line(&format!("graphics error: {e}"));
+                static SEEN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+                if SEEN.fetch_add(1, Ordering::Relaxed) < 25 {
+                    crate::log::line(&format!("graphics error: {e}"));
+                }
                 flag.store(true, Ordering::Relaxed);
+                // a failing allocation repeats the same error many times: keep the log readable
+                static COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+                if COUNT.fetch_add(1, Ordering::Relaxed) == 25 {
+                    crate::log::line("more graphics errors follow, not logged");
+                }
             }));
             Renderer::new(&rs.device, &rs.queue)
         });
@@ -205,6 +228,22 @@ impl FormaApp {
             last_t: Instant::now(),
             drag_t: Instant::now(),
             rendered_key: None,
+            gpu_kind: cc.wgpu_render_state.as_ref().map(|rs| rs.adapter.get_info().device_type),
+        }
+    }
+
+    /// Texture detail for the next load. Auto keeps all textures together within a share of graphics memory
+    /// that suits this card: integrated graphics borrow system memory, so they get a smaller share.
+    fn tex_limit(&self) -> loader::TexLimit {
+        let integrated = matches!(self.gpu_kind, Some(eframe::wgpu::DeviceType::IntegratedGpu) | Some(eframe::wgpu::DeviceType::Cpu));
+        let ram = crate::log::memory().map(|m| m.2).unwrap_or(8_000_000_000);
+        let auto = if integrated { ((ram as f64 * 0.12) as u64).clamp(500_000_000, 2_500_000_000) } else { 6_000_000_000 };
+        match self.s.tex_size {
+            TexSize::Auto => loader::TexLimit { budget: Some(auto), min_skip: 0, off: false },
+            TexSize::Full => loader::TexLimit { budget: None, min_skip: 0, off: false },
+            TexSize::Half => loader::TexLimit { budget: None, min_skip: 1, off: false },
+            TexSize::Quarter => loader::TexLimit { budget: None, min_skip: 2, off: false },
+            TexSize::Off => loader::TexLimit { budget: None, min_skip: 0, off: true },
         }
     }
 
@@ -234,8 +273,9 @@ impl FormaApp {
         let (tx, rx) = channel();
         let p2 = progress.clone();
         let path2 = path.clone();
+        let limit = self.tex_limit();
         std::thread::spawn(move || {
-            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| loader::load(&path2, &p2)))
+            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| loader::load(&path2, &p2, limit)))
                 .unwrap_or_else(|_| Err("The loader stopped unexpectedly. The file may be damaged or too large for this computer's memory.".into()));
             let _ = tx.send(r);
         });
@@ -254,6 +294,10 @@ impl FormaApp {
             }
             Ok(mut data) => {
                 let (Some(rs), Some(r)) = (rs, self.renderer.as_ref()) else { return };
+
+                crate::log::line(&format!("upload start: {} pieces, memory {:?}", data.chunks.len(), crate::log::memory().map(|m| crate::log::gb(m.0))));
+                let gpu = r.upload(&rs.device, &rs.queue, &mut data);
+                let (gpu_complete, shown_tris) = (gpu.complete, gpu.shown_tris);
                 let textures: Vec<TexInfo> = data
                     .materials
                     .iter()
@@ -261,13 +305,11 @@ impl FormaApp {
                         let name = m.texture_file.clone()?;
                         let name = name.rsplit('/').next().unwrap_or(&name).to_string();
                         Some(match &m.texture {
-                            Some(t) => TexInfo { name, w: t.width, h: t.height, bytes: t.mips.iter().map(|l| l.len() as u64).sum(), problem: None },
-                            None => TexInfo { name, w: 0, h: 0, bytes: 0, problem: m.texture_problem.clone() },
+                            Some(t) => TexInfo { name, w: t.width, h: t.height, ow: t.orig_w.max(t.orig_h), bytes: t.bytes, problem: None },
+                            None => TexInfo { name, w: 0, h: 0, ow: 0, bytes: 0, problem: m.texture_problem.clone() },
                         })
                     })
                     .collect();
-                crate::log::line(&format!("upload start: {} pieces, memory {:?}", data.chunks.len(), crate::log::memory().map(|m| crate::log::gb(m.0))));
-                let gpu = r.upload(&rs.device, &rs.queue, &mut data);
                 crate::log::line(&format!("upload done: geometry {} textures {}", gpu.geometry_bytes, gpu.texture_bytes));
                 let tier = &mut self.tiers[job.tier];
                 let n = tier.versions.len() as u32 + 1;
@@ -282,13 +324,22 @@ impl FormaApp {
                     max: Vec3::from(data.max),
                     textures,
                     materials: data.materials.len().saturating_sub(1),
+                    complete: gpu_complete,
+                    shown_tris,
                 });
                 tier.cur = tier.versions.len() - 1;
                 drop(data);
                 if job.tier == self.active {
                     self.reframe(rs, false);
                 }
-                self.toast(format!("{} v{n} loaded · {} triangles in {secs:.1} s", TIERS[job.tier], fmt(tris)), 5.0);
+                if gpu_complete {
+                    self.toast(format!("{} v{n} loaded · {} triangles in {secs:.1} s", TIERS[job.tier], fmt(tris)), 5.0);
+                } else {
+                    self.toast(
+                        format!("The graphics card ran out of memory. Showing {} of {} triangles. Close other apps, or set Texture size lower and open it again.", fmt(shown_tris), fmt(tris)),
+                        12.0,
+                    );
+                }
                 self.dirty = true;
             }
         }
@@ -450,7 +501,7 @@ impl FormaApp {
         }
         let loaded: Vec<&TexInfo> = v.textures.iter().filter(|t| t.problem.is_none()).collect();
         let missing: Vec<&TexInfo> = v.textures.iter().filter(|t| t.problem.is_some()).collect();
-        if let Some(maxt) = loaded.iter().map(|t| t.w.max(t.h)).max() {
+        if let Some(maxt) = loaded.iter().map(|t| t.ow).max() {
             let over = b[1] > 0 && maxt as u64 > b[1];
             out.push(Check {
                 lvl: if over { Lvl::Bad } else { Lvl::Ok },
@@ -616,6 +667,17 @@ impl eframe::App for FormaApp {
                     }
                 }
                 ui.add_space(6.0);
+                egui::ComboBox::from_label("Texture size")
+                    .selected_text(match self.s.tex_size { TexSize::Auto => "Auto", TexSize::Full => "Full", TexSize::Half => "Half", TexSize::Quarter => "Quarter", TexSize::Off => "Off" })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.s.tex_size, TexSize::Auto, "Auto, fit this graphics card");
+                        ui.selectable_value(&mut self.s.tex_size, TexSize::Full, "Full");
+                        ui.selectable_value(&mut self.s.tex_size, TexSize::Half, "Half");
+                        ui.selectable_value(&mut self.s.tex_size, TexSize::Quarter, "Quarter");
+                        ui.selectable_value(&mut self.s.tex_size, TexSize::Off, "Off");
+                    })
+                    .response
+                    .on_hover_text("Applies to the next file you open. Quality checks always use the full texture size.");
                 ui.checkbox(&mut self.s.grid, "Grid");
                 ui.checkbox(&mut self.s.axes, "Axis");
                 if self.s.mode == Mode::Checker {
@@ -717,7 +779,8 @@ impl eframe::App for FormaApp {
                             ui.label(RichText::new(&t.name).size(12.0).color(FG));
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| match &t.problem {
                                 None => {
-                                    ui.label(RichText::new(format!("{}×{} · {}", t.w, t.h, bytes(t.bytes))).monospace().size(11.0).color(MUTED));
+                                    let shown = if t.ow > t.w.max(t.h) { format!("{} px, shown at {} · {}", t.ow, t.w.max(t.h), bytes(t.bytes)) } else { format!("{}×{} · {}", t.w, t.h, bytes(t.bytes)) };
+                                    ui.label(RichText::new(shown).monospace().size(11.0).color(MUTED));
                                 }
                                 Some(p) => {
                                     ui.label(RichText::new(p).monospace().size(11.0).color(WARN));
@@ -948,7 +1011,7 @@ impl eframe::App for FormaApp {
 
             // HUD
             if let Some(v) = self.current() {
-                let txt = format!("{}   v{} · {}   {} tris   {}", TIERS[self.active], v.n, v.name, fmt(v.stats.tris), bytes(v.gpu.geometry_bytes + v.gpu.texture_bytes));
+                let txt = format!("{}   v{} · {}   {} tris   {}{}", TIERS[self.active], v.n, v.name, fmt(v.stats.tris), bytes(v.gpu.geometry_bytes + v.gpu.texture_bytes), if v.complete { String::new() } else { format!("   PARTIAL: {} tris shown", fmt(v.shown_tris)) });
                 let p = Pos2::new(rect.left() + 12.0, rect.bottom() - 14.0);
                 let galley = ui.painter().layout_no_wrap(txt, egui::FontId::monospace(11.0), Color32::from_rgb(0xe8, 0xea, 0xed));
                 let bg = Rect::from_min_size(p - Vec2::new(6.0, galley.size().y * 0.5 + 4.0), galley.size() + Vec2::new(12.0, 8.0));

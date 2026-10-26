@@ -55,6 +55,8 @@ pub struct GpuMesh {
     materials: Vec<GpuMaterial>,
     pub geometry_bytes: u64,
     pub texture_bytes: u64,
+    pub shown_tris: u64,
+    pub complete: bool,
 }
 
 struct Targets {
@@ -270,61 +272,59 @@ impl Renderer {
         }
     }
 
-    /// Moves the mesh to the graphics card. CPU copies are released piece by piece, and the queue is flushed
-    /// regularly so the driver's staging copies never pile up into a second full copy of the model.
+    /// Moves the mesh to the graphics card, geometry first and textures after. CPU copies are released
+    /// piece by piece and the queue is flushed regularly, so the driver's staging copies never pile up.
+    /// Every allocation is checked: if the graphics card runs out of memory, loading stops cleanly and the
+    /// part that fits is shown instead of crashing.
     pub fn upload(&self, device: &wgpu::Device, queue: &wgpu::Queue, data: &mut LoadResult) -> GpuMesh {
         let flush = || {
             queue.submit(std::iter::empty());
             let _ = device.poll(wgpu::Maintain::Wait);
         };
-        let mut geometry_bytes = 0u64;
-        let mut texture_bytes = 0u64;
-        let mut materials = Vec::with_capacity(data.materials.len());
-        for m in data.materials.iter_mut() {
-            let owned;
-            let (view, has_tex): (&wgpu::TextureView, bool) = match &m.texture {
-                Some(t) => {
-                    texture_bytes += t.mips.iter().map(|l| l.len() as u64).sum::<u64>();
-                    owned = upload_texture(device, queue, t, &m.name);
-                    flush();
-                    (&owned, true)
-                }
-                None => (&self.white, false),
-            };
-            let base = if has_tex { [1.0, 1.0, 1.0] } else { m.base };
-            let u = MatUniform { base: [base[0], base[1], base[2], 1.0], flags: [if has_tex { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0] };
-            let ubuf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("material"),
-                contents: bytemuck::bytes_of(&u),
-                usage: wgpu::BufferUsages::UNIFORM,
-            });
-            let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("material"),
-                layout: &self.mat_layout,
-                entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: ubuf.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(view) },
-                    wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&self.sampler) },
-                ],
-            });
-            materials.push(GpuMaterial { bind });
-            if let Some(t) = m.texture.as_mut() {
-                t.mips = Vec::new();
+        let checked = |f: &mut dyn FnMut()| -> bool {
+            device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+            device.push_error_scope(wgpu::ErrorFilter::Validation);
+            f();
+            let v = pollster::block_on(device.pop_error_scope());
+            let o = pollster::block_on(device.pop_error_scope());
+            if let Some(e) = v.as_ref().or(o.as_ref()) {
+                crate::log::line(&format!("graphics allocation failed: {e}"));
             }
-        }
-        let mut chunks = Vec::with_capacity(data.chunks.len());
+            v.is_none() && o.is_none()
+        };
+        let buffer = |label: &str, bytes: &[u8], usage: wgpu::BufferUsages| {
+            let b = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size: (bytes.len() as u64).max(4),
+                usage: usage | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            queue.write_buffer(&b, 0, bytes);
+            b
+        };
+        let mut mesh = GpuMesh { chunks: Vec::new(), materials: Vec::new(), geometry_bytes: 0, texture_bytes: 0, shown_tris: 0, complete: true };
         let mut pending = 0u64;
+        let nmat = data.materials.len().max(1);
         for c in std::mem::take(&mut data.chunks) {
-            let init = |label: &str, bytes: &[u8], usage: wgpu::BufferUsages| {
-                device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some(label), contents: bytes, usage })
-            };
-            let pos = init("pos", bytemuck::cast_slice(&c.pos), wgpu::BufferUsages::VERTEX);
-            let nrm = init("nrm", bytemuck::cast_slice(&c.nrm), wgpu::BufferUsages::VERTEX);
-            let uv = c.uv.as_ref().map(|u| init("uv", bytemuck::cast_slice(u), wgpu::BufferUsages::VERTEX));
-            let idx = init("idx", bytemuck::cast_slice(&c.idx), wgpu::BufferUsages::INDEX);
-            geometry_bytes += (c.pos.len() * 12 + c.nrm.len() * 8 + c.uv.as_ref().map(|u| u.len() * 8).unwrap_or(0) + c.idx.len() * 4) as u64;
+            if !mesh.complete {
+                continue; // drop the rest without uploading
+            }
+            let mut made = None;
+            let ok = checked(&mut || {
+                let pos = buffer("pos", bytemuck::cast_slice(&c.pos), wgpu::BufferUsages::VERTEX);
+                let nrm = buffer("nrm", bytemuck::cast_slice(&c.nrm), wgpu::BufferUsages::VERTEX);
+                let uv = c.uv.as_ref().map(|u| buffer("uv", bytemuck::cast_slice(u), wgpu::BufferUsages::VERTEX));
+                let idx = buffer("idx", bytemuck::cast_slice(&c.idx), wgpu::BufferUsages::INDEX);
+                made = Some(GpuChunk { pos, nrm, uv, idx, count: c.idx.len() as u32, material: c.material.min(nmat - 1) });
+            });
+            if !ok {
+                mesh.complete = false;
+                continue;
+            }
+            mesh.geometry_bytes += (c.pos.len() * 12 + c.nrm.len() * 8 + c.uv.as_ref().map(|u| u.len() * 8).unwrap_or(0) + c.idx.len() * 4) as u64;
+            mesh.shown_tris += (c.idx.len() / 3) as u64;
             pending += (c.pos.len() * 28 + c.idx.len() * 4) as u64;
-            chunks.push(GpuChunk { pos, nrm, uv, idx, count: c.idx.len() as u32, material: c.material.min(materials.len().saturating_sub(1)) });
+            mesh.chunks.push(made.unwrap());
             drop(c);
             if pending > (192 << 20) {
                 flush();
@@ -332,7 +332,55 @@ impl Renderer {
             }
         }
         flush();
-        GpuMesh { chunks, materials, geometry_bytes, texture_bytes }
+        for m in data.materials.iter_mut() {
+            let mut view = None;
+            if let Some(t) = &m.texture {
+                let ok = checked(&mut || view = Some(upload_texture(device, queue, t, &m.name)));
+                flush();
+                if ok {
+                    mesh.texture_bytes += t.bytes;
+                } else {
+                    view = None;
+                    m.texture_problem = Some("not enough graphics memory".into());
+                }
+            }
+            if let Some(t) = m.texture.as_mut() {
+                t.mips = Vec::new();
+            }
+            if view.is_none() && m.texture_problem.as_deref() == Some("not enough graphics memory") {
+                m.texture = None;
+            }
+            let has_tex = view.is_some();
+            let base = if has_tex { [1.0, 1.0, 1.0] } else { m.base };
+            let u = MatUniform { base: [base[0], base[1], base[2], 1.0], flags: [if has_tex { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0] };
+            let ubuf = buffer("material", bytemuck::bytes_of(&u), wgpu::BufferUsages::UNIFORM);
+            let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("material"),
+                layout: &self.mat_layout,
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: ubuf.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(view.as_ref().unwrap_or(&self.white)) },
+                    wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+                ],
+            });
+            mesh.materials.push(GpuMaterial { bind });
+        }
+        if mesh.materials.is_empty() {
+            let u = MatUniform { base: [0.8, 0.8, 0.8, 1.0], flags: [0.0; 4] };
+            let ubuf = buffer("material", bytemuck::bytes_of(&u), wgpu::BufferUsages::UNIFORM);
+            let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("material"),
+                layout: &self.mat_layout,
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: ubuf.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&self.white) },
+                    wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+                ],
+            });
+            mesh.materials.push(GpuMaterial { bind });
+        }
+        flush();
+        mesh
     }
 
     pub fn set_lines(&mut self, device: &wgpu::Device, verts: &[LineVertex]) {

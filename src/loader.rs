@@ -36,9 +36,21 @@ pub struct Chunk {
     pub material: usize,
 }
 
+/// How much texture detail to load. `budget` caps the total texture memory (mip levels included):
+/// textures are halved together until they fit.
+#[derive(Clone, Copy, Default)]
+pub struct TexLimit {
+    pub budget: Option<u64>,
+    pub min_skip: u32,
+    pub off: bool,
+}
+
 pub struct TextureImage {
     pub width: u32,
     pub height: u32,
+    pub orig_w: u32,
+    pub orig_h: u32,
+    pub bytes: u64,
     /// RGBA8 levels, full size first.
     pub mips: Vec<Vec<u8>>,
 }
@@ -299,7 +311,7 @@ fn pack_n(n: [f32; 3]) -> [i16; 4] {
 
 // ---------------------------------------------------------------- main entry
 
-pub fn load(path: &Path, progress: &Progress) -> Result<LoadResult, String> {
+pub fn load(path: &Path, progress: &Progress, tex: TexLimit) -> Result<LoadResult, String> {
     let t0 = std::time::Instant::now();
     let file = std::fs::File::open(path).map_err(|e| format!("Could not open the file: {e}"))?;
     let mmap = unsafe { memmap2::Mmap::map(&file) }.map_err(|e| format!("Could not read the file: {e}"))?;
@@ -789,21 +801,65 @@ pub fn load(path: &Path, progress: &Progress) -> Result<LoadResult, String> {
         }
         None
     };
-    materials.par_iter_mut().for_each(|m| {
-        let Some(name) = m.texture_file.clone() else { return };
+    // find every texture and read only its header for the size
+    let mut jobs: Vec<(usize, PathBuf, u32, u32)> = Vec::new();
+    for (i, m) in materials.iter_mut().enumerate() {
+        let Some(name) = m.texture_file.clone() else { continue };
+        if tex.off {
+            m.texture_problem = Some("textures off".into());
+            continue;
+        }
         let Some(p) = lookup(&name) else {
             m.texture_problem = Some("not found".into());
-            return;
+            continue;
         };
-        match image::open(&p) {
-            Ok(img) => {
-                let rgba = img.to_rgba8();
-                let (w, h) = rgba.dimensions();
-                m.texture = Some(TextureImage { width: w, height: h, mips: build_mips(w, h, rgba.into_raw()) });
-            }
+        match image::image_dimensions(&p) {
+            Ok((w, h)) => jobs.push((i, p, w, h)),
             Err(_) => m.texture_problem = Some("format not supported".into()),
         }
+    }
+    // pick one shared reduction so all textures together fit the budget
+    let size_at = |s: u32| -> u64 { jobs.iter().map(|j| ((j.2 >> s).max(1) as u64) * ((j.3 >> s).max(1) as u64) * 4 * 4 / 3).sum() };
+    let mut skip = tex.min_skip;
+    if let Some(b) = tex.budget {
+        while skip < 8 && size_at(skip) > b {
+            skip += 1;
+        }
+    }
+    crate::log::line(&format!("textures: {} files, full size {}, loading at 1/{} ({})", jobs.len(), crate::log::gb(size_at(0)), 1 << skip, crate::log::gb(size_at(skip))));
+    // decode two at a time so a set of 8K or 16K tiles never needs all of its full-size pixels in memory at once
+    let pool = rayon::ThreadPoolBuilder::new().num_threads(2).build().map_err(|e| e.to_string())?;
+    let decoded: Vec<(usize, Result<TextureImage, String>)> = pool.install(|| {
+        jobs.par_iter()
+            .map(|(i, p, ow, oh)| {
+                let r = image::open(p).map_err(|_| "format not supported".to_string()).map(|img| {
+                    let rgba = img.to_rgba8();
+                    drop(img);
+                    let (mut w, mut h) = rgba.dimensions();
+                    let mut base = rgba.into_raw();
+                    for _ in 0..skip {
+                        if w == 1 && h == 1 {
+                            break;
+                        }
+                        let (nw, nh, nb) = half(w, h, &base);
+                        w = nw;
+                        h = nh;
+                        base = nb;
+                    }
+                    let mips = build_mips(w, h, base);
+                    let bytes = mips.iter().map(|l| l.len() as u64).sum();
+                    TextureImage { width: w, height: h, orig_w: *ow, orig_h: *oh, bytes, mips }
+                });
+                (*i, r)
+            })
+            .collect()
     });
+    for (i, r) in decoded {
+        match r {
+            Ok(t) => materials[i].texture = Some(t),
+            Err(e) => materials[i].texture_problem = Some(e),
+        }
+    }
 
     stats.seconds = t0.elapsed().as_secs_f32();
     progress.done.store(total * 3, Ordering::Relaxed);
@@ -818,27 +874,32 @@ pub fn load(path: &Path, progress: &Progress) -> Result<LoadResult, String> {
     })
 }
 
+/// Halve an RGBA8 image with a 2x2 box filter.
+fn half(cw: u32, ch: u32, prev: &[u8]) -> (u32, u32, Vec<u8>) {
+    let (nw, nh) = ((cw / 2).max(1), (ch / 2).max(1));
+    let mut next = vec![0u8; (nw * nh * 4) as usize];
+    next.par_chunks_mut((nw * 4) as usize).enumerate().for_each(|(y, row)| {
+        for x in 0..nw as usize {
+            for c in 0..4 {
+                let mut s = 0u32;
+                for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                    let sx = (x * 2 + dx).min(cw as usize - 1);
+                    let sy = (y * 2 + dy).min(ch as usize - 1);
+                    s += prev[(sy * cw as usize + sx) * 4 + c] as u32;
+                }
+                row[x * 4 + c] = (s / 4) as u8;
+            }
+        }
+    });
+    (nw, nh, next)
+}
+
 /// Box-filter mip chain on the CPU (sRGB treated as linear, which is fine for review).
 fn build_mips(w: u32, h: u32, base: Vec<u8>) -> Vec<Vec<u8>> {
     let mut mips = vec![base];
     let (mut cw, mut ch) = (w, h);
     while cw > 1 || ch > 1 {
-        let (nw, nh) = ((cw / 2).max(1), (ch / 2).max(1));
-        let prev = mips.last().unwrap();
-        let mut next = vec![0u8; (nw * nh * 4) as usize];
-        next.par_chunks_mut((nw * 4) as usize).enumerate().for_each(|(y, row)| {
-            for x in 0..nw as usize {
-                for c in 0..4 {
-                    let mut s = 0u32;
-                    for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
-                        let sx = (x * 2 + dx).min(cw as usize - 1);
-                        let sy = (y * 2 + dy).min(ch as usize - 1);
-                        s += prev[(sy * cw as usize + sx) * 4 + c] as u32;
-                    }
-                    row[x * 4 + c] = (s / 4) as u8;
-                }
-            }
-        });
+        let (nw, nh, next) = half(cw, ch, mips.last().unwrap());
         mips.push(next);
         cw = nw;
         ch = nh;
