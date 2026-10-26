@@ -265,11 +265,11 @@ fn finish(b: &mut Builder, out: &mut Vec<RawPiece>) {
     nb.nrm.shrink_to_fit();
     nb.idx.shrink_to_fit();
     nb.map = FxHashMap::default();
+    // `src` is kept for every piece: computing smooth normals reads it across all pieces
+    nb.src.shrink_to_fit();
     if nb.any_need_n {
-        nb.src.shrink_to_fit();
         nb.need_n.shrink_to_fit();
     } else {
-        nb.src = Vec::new();
         nb.need_n = Vec::new();
     }
     let uv = if nb.any_uv {

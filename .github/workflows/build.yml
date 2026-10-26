@@ -42,6 +42,8 @@ jobs:
             $p = Start-Process -FilePath $exe -ArgumentList @('--selftest', "tests/$m.obj", "ci/$m") -Wait -PassThru -NoNewWindow
             "$m exit $($p.ExitCode)" | Add-Content ci/selftest.txt
           }
+          $log = Join-Path $env:LOCALAPPDATA "Forma/forma-log.txt"
+          if (Test-Path $log) { Copy-Item $log ci/forma-log.txt }
           Get-Content ci/*.txt
       - name: Package
         shell: pwsh

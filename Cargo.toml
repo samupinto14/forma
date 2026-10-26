@@ -1,6 +1,6 @@
 [package]
 name = "forma"
-version = "5.0.0-alpha.2"
+version = "5.0.0-alpha.3"
 edition = "2021"
 description = "Forma, a fast view-only OBJ asset reviewer"
 build = "build.rs"
