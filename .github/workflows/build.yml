@@ -27,6 +27,8 @@ jobs:
         shell: pwsh
         run: |
           python tests/gen.py tests
+          python -m pip install --quiet pillow
+          python tests/gen_udim.py tests
           # build machines have no graphics card: run the test copy with Mesa's software OpenGL next to it
           New-Item -ItemType Directory -Force cirun | Out-Null
           Copy-Item target/release/forma.exe cirun/forma.exe
@@ -38,7 +40,8 @@ jobs:
           "mesa: $($asset.name)" | Add-Content ci/selftest.txt
           $env:GALLIUM_DRIVER = "llvmpipe"
           $exe = (Resolve-Path cirun/forma.exe).Path
-          foreach ($m in @('test_asset', 'blob', 'terrain')) {
+          foreach ($m in @('test_asset', 'blob', 'terrain', 'udim')) {
+            if ($m -eq 'udim') { $env:FORMA_TEX_BUDGET = '500000000' } else { Remove-Item Env:FORMA_TEX_BUDGET -ErrorAction SilentlyContinue }
             $p = Start-Process -FilePath $exe -ArgumentList @('--selftest', "tests/$m.obj", "ci/$m") -Wait -PassThru -NoNewWindow
             "$m exit $($p.ExitCode)" | Add-Content ci/selftest.txt
           }

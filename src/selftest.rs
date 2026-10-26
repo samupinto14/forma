@@ -42,7 +42,7 @@ pub fn run(obj: &str, out: &str) -> Result<(), String> {
     .map_err(|e| format!("device: {e}"))?;
 
     let progress = Progress::default();
-    let mut data = loader::load(Path::new(obj), &progress, loader::TexLimit::default())?;
+    let mut data = loader::load(Path::new(obj), &progress, loader::TexLimit { budget: std::env::var("FORMA_TEX_BUDGET").ok().and_then(|v| v.parse().ok()), ..Default::default() })?;
     let st = &data.stats;
     report += &format!(
         "file: {} ({} bytes)\nload: {:.2} s\ntriangles: {}\nvertices: {}\ngpu vertices: {}\npieces: {}\nuvs: {} normals: {}\ndegenerate: {} invalid: {}\npieces without uv: {}\nmaterials: {}\n",
