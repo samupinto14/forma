@@ -11,20 +11,23 @@ use std::path::Path;
 
 pub fn run(obj: &str, out: &str) -> Result<(), String> {
     let mut report = String::new();
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::default());
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        force_fallback_adapter: false,
-        compatible_surface: None,
-    }))
-    .or_else(|| {
-        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            force_fallback_adapter: true,
-            compatible_surface: None,
-        }))
-    })
-    .ok_or("no graphics adapter")?;
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor { backends: wgpu::Backends::all(), ..Default::default() });
+    let all = instance.enumerate_adapters(wgpu::Backends::all());
+    for a in &all {
+        let i = a.get_info();
+        report += &format!("found adapter: {} ({:?}, {:?})\n", i.name, i.backend, i.device_type);
+    }
+    // prefer a real GPU, otherwise take whatever exists (a software renderer on build machines)
+    let pick = all.iter().position(|a| matches!(a.get_info().device_type, wgpu::DeviceType::DiscreteGpu | wgpu::DeviceType::IntegratedGpu))
+        .or_else(|| all.iter().position(|a| a.get_info().backend != wgpu::Backend::Gl))
+        .or(if all.is_empty() { None } else { Some(0) });
+    let adapter = match pick {
+        Some(i) => all.into_iter().nth(i).unwrap(),
+        None => {
+            let _ = std::fs::write(format!("{out}_report.txt"), &report);
+            return Err("no graphics adapter".into());
+        }
+    };
     let info = adapter.get_info();
     report += &format!("adapter: {} ({:?}, {:?})\n", info.name, info.backend, info.device_type);
     let (device, queue) = pollster::block_on(adapter.request_device(

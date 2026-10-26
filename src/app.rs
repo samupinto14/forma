@@ -577,7 +577,7 @@ impl eframe::App for FormaApp {
                     let dot = match lvl { Some(Lvl::Ok) => OK, Some(Lvl::Warn) => WARN, Some(Lvl::Bad) => BAD, None => LINE };
                     let sel = self.active == t;
                     let txt = RichText::new(format!("●  {}", TIERS[t])).size(13.5).strong().color(if sel { FG } else { MUTED });
-                    let btn = egui::Button::new(txt).fill(if sel { RAISED } else { PANEL }).stroke(Stroke::new(1.0, if sel { ACCENT } else { LINE }));
+                    let btn = egui::Button::new(txt).fill(if sel { RAISED } else { PANEL }).stroke(Stroke::new(1.0_f32, if sel { ACCENT } else { LINE }));
                     let r = ui.add(btn);
                     // recolour the dot
                     let p = Pos2::new(r.rect.left() + 14.5, r.rect.center().y);
@@ -602,7 +602,7 @@ impl eframe::App for FormaApp {
                 heading(ui, "VIEWING MODE");
                 for (k, (m, name)) in MODES.iter().enumerate() {
                     let sel = self.s.mode == *m;
-                    let r = ui.add_sized([ui.available_width(), 26.0], egui::Button::new(RichText::new(*name).color(FG)).fill(if sel { RAISED } else { PANEL }).stroke(Stroke::new(1.0, if sel { ACCENT } else { LINE })));
+                    let r = ui.add_sized([ui.available_width(), 26.0], egui::Button::new(RichText::new(*name).color(FG)).fill(if sel { RAISED } else { PANEL }).stroke(Stroke::new(1.0_f32, if sel { ACCENT } else { LINE })));
                     ui.painter().text(Pos2::new(r.rect.right() - 10.0, r.rect.center().y), egui::Align2::RIGHT_CENTER, format!("{}", k + 1), egui::FontId::monospace(10.0), MUTED);
                     if r.clicked() {
                         self.s.mode = *m;
@@ -753,7 +753,7 @@ impl eframe::App for FormaApp {
                         format!(" · {}{} vs v{}", if d >= 0 { "+" } else { "−" }, fmt(d.unsigned_abs()), p.n)
                     });
                     let txt = format!("v{}  {}\n{} tris{}", v.n, v.name, fmt(v.stats.tris), delta.unwrap_or_default());
-                    let b = egui::Button::new(RichText::new(txt).size(12.0).color(FG)).fill(RAISED).stroke(Stroke::new(1.0, if sel { ACCENT } else { LINE }));
+                    let b = egui::Button::new(RichText::new(txt).size(12.0).color(FG)).fill(RAISED).stroke(Stroke::new(1.0_f32, if sel { ACCENT } else { LINE }));
                     if ui.add_sized([ui.available_width(), 40.0], b).clicked() {
                         pick = Some(i);
                     }
@@ -917,7 +917,7 @@ impl eframe::App for FormaApp {
 
             // overlay buttons
             let tools = Rect::from_min_size(rect.min + Vec2::new(10.0, 10.0), Vec2::new(220.0, 30.0));
-            ui.allocate_ui_at_rect(tools, |ui| {
+            ui.allocate_new_ui(egui::UiBuilder::new().max_rect(tools), |ui| {
                 ui.horizontal(|ui| {
                     if ui.add(egui::Button::new(RichText::new("⟲  Reset view").strong()).fill(Color32::from_rgba_unmultiplied(12, 14, 16, 200))).clicked() {
                         if let Some(rs) = rs.as_ref() {
@@ -960,7 +960,7 @@ impl eframe::App for FormaApp {
                 let stage = job.progress.stage.lock().map(|s| s.clone()).unwrap_or_default();
                 let r = Rect::from_center_size(rect.center(), Vec2::new(420.0, 64.0));
                 ui.painter().rect_filled(r, 8.0, Color32::from_rgba_unmultiplied(12, 14, 16, 235));
-                ui.allocate_ui_at_rect(r.shrink(12.0), |ui| {
+                ui.allocate_new_ui(egui::UiBuilder::new().max_rect(r.shrink(12.0)), |ui| {
                     ui.label(RichText::new(format!("{} · {stage}", job.name)).size(12.0).color(Color32::from_rgb(0xe8, 0xea, 0xed)));
                     ui.add(egui::ProgressBar::new((done / total).clamp(0.0, 1.0)).desired_height(6.0).fill(ACCENT));
                 });
@@ -1002,16 +1002,16 @@ fn style(ctx: &egui::Context) {
     v.extreme_bg_color = Color32::from_rgb(0x15, 0x17, 0x1a);
     v.faint_bg_color = RAISED;
     v.selection.bg_fill = ACCENT.linear_multiply(0.45);
-    v.selection.stroke = Stroke::new(1.0, ACCENT);
+    v.selection.stroke = Stroke::new(1.0_f32, ACCENT);
     v.hyperlink_color = ACCENT;
     v.widgets.inactive.weak_bg_fill = RAISED;
     v.widgets.inactive.bg_fill = RAISED;
-    v.widgets.inactive.bg_stroke = Stroke::new(1.0, LINE);
+    v.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, LINE);
     v.widgets.hovered.weak_bg_fill = Color32::from_rgb(0x2a, 0x2f, 0x35);
-    v.widgets.hovered.bg_stroke = Stroke::new(1.0, ACCENT);
-    v.widgets.active.bg_stroke = Stroke::new(1.0, ACCENT);
-    v.widgets.noninteractive.fg_stroke = Stroke::new(1.0, FG);
-    v.widgets.inactive.fg_stroke = Stroke::new(1.0, FG);
+    v.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, ACCENT);
+    v.widgets.active.bg_stroke = Stroke::new(1.0_f32, ACCENT);
+    v.widgets.noninteractive.fg_stroke = Stroke::new(1.0_f32, FG);
+    v.widgets.inactive.fg_stroke = Stroke::new(1.0_f32, FG);
     for w in [&mut v.widgets.inactive, &mut v.widgets.hovered, &mut v.widgets.active, &mut v.widgets.open] {
         w.rounding = egui::Rounding::same(6.0);
     }
