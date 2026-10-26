@@ -52,22 +52,6 @@ jobs:
         with:
           name: Forma-windows
           path: dist/Forma.exe
-      - name: Publish build report
-        if: always() && github.event_name == 'push'
-        shell: pwsh
-        run: |
-          git config user.name "forma-ci"
-          git config user.email "forma-ci@users.noreply.github.com"
-          $sha = git rev-parse --short HEAD
-          Copy-Item -Recurse ci $env:RUNNER_TEMP/ci
-          git checkout --orphan ci-results
-          git rm -rf --cached . | Out-Null
-          Get-ChildItem -Force | Where-Object { $_.Name -ne '.git' } | Remove-Item -Recurse -Force
-          Copy-Item -Recurse $env:RUNNER_TEMP/ci/* .
-          "$sha" | Set-Content commit.txt
-          git add -A
-          git commit -m "Build report for $sha"
-          git push -f origin ci-results
       - name: Read version
         id: ver
         shell: pwsh
@@ -87,3 +71,19 @@ jobs:
           body: |
             Download **Forma.exe** below and run it. Nothing to install.
             The first time, Windows SmartScreen may warn about an unknown app: choose **More info**, then **Run anyway**.
+      - name: Publish build report
+        if: always() && github.event_name == 'push'
+        shell: pwsh
+        run: |
+          git config user.name "forma-ci"
+          git config user.email "forma-ci@users.noreply.github.com"
+          $sha = git rev-parse --short HEAD
+          Copy-Item -Recurse ci $env:RUNNER_TEMP/ci
+          git checkout --orphan ci-results
+          git rm -rf --cached . | Out-Null
+          Get-ChildItem -Force | Where-Object { $_.Name -ne '.git' } | Remove-Item -Recurse -Force
+          Copy-Item -Recurse $env:RUNNER_TEMP/ci/* .
+          "$sha" | Set-Content commit.txt
+          git add -A
+          git commit -m "Build report for $sha"
+          git push -f origin ci-results
