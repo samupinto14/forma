@@ -3,6 +3,7 @@
 mod app;
 mod camera;
 mod loader;
+mod log;
 mod render;
 mod selftest;
 
@@ -12,6 +13,7 @@ use std::sync::Arc;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn main() -> eframe::Result<()> {
+    log::install_panic_hook();
     let args: Vec<String> = std::env::args().collect();
     if args.len() >= 4 && args[1] == "--selftest" {
         if let Err(e) = selftest::run(&args[2], &args[3]) {

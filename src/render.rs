@@ -270,16 +270,23 @@ impl Renderer {
         }
     }
 
-    pub fn upload(&self, device: &wgpu::Device, queue: &wgpu::Queue, data: &LoadResult) -> GpuMesh {
+    /// Moves the mesh to the graphics card. CPU copies are released piece by piece, and the queue is flushed
+    /// regularly so the driver's staging copies never pile up into a second full copy of the model.
+    pub fn upload(&self, device: &wgpu::Device, queue: &wgpu::Queue, data: &mut LoadResult) -> GpuMesh {
+        let flush = || {
+            queue.submit(std::iter::empty());
+            let _ = device.poll(wgpu::Maintain::Wait);
+        };
         let mut geometry_bytes = 0u64;
         let mut texture_bytes = 0u64;
         let mut materials = Vec::with_capacity(data.materials.len());
-        for m in &data.materials {
+        for m in data.materials.iter_mut() {
             let owned;
             let (view, has_tex): (&wgpu::TextureView, bool) = match &m.texture {
                 Some(t) => {
                     texture_bytes += t.mips.iter().map(|l| l.len() as u64).sum::<u64>();
                     owned = upload_texture(device, queue, t, &m.name);
+                    flush();
                     (&owned, true)
                 }
                 None => (&self.white, false),
@@ -301,9 +308,13 @@ impl Renderer {
                 ],
             });
             materials.push(GpuMaterial { bind });
+            if let Some(t) = m.texture.as_mut() {
+                t.mips = Vec::new();
+            }
         }
         let mut chunks = Vec::with_capacity(data.chunks.len());
-        for c in &data.chunks {
+        let mut pending = 0u64;
+        for c in std::mem::take(&mut data.chunks) {
             let init = |label: &str, bytes: &[u8], usage: wgpu::BufferUsages| {
                 device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some(label), contents: bytes, usage })
             };
@@ -312,8 +323,15 @@ impl Renderer {
             let uv = c.uv.as_ref().map(|u| init("uv", bytemuck::cast_slice(u), wgpu::BufferUsages::VERTEX));
             let idx = init("idx", bytemuck::cast_slice(&c.idx), wgpu::BufferUsages::INDEX);
             geometry_bytes += (c.pos.len() * 12 + c.nrm.len() * 8 + c.uv.as_ref().map(|u| u.len() * 8).unwrap_or(0) + c.idx.len() * 4) as u64;
+            pending += (c.pos.len() * 28 + c.idx.len() * 4) as u64;
             chunks.push(GpuChunk { pos, nrm, uv, idx, count: c.idx.len() as u32, material: c.material.min(materials.len().saturating_sub(1)) });
+            drop(c);
+            if pending > (192 << 20) {
+                flush();
+                pending = 0;
+            }
         }
+        flush();
         GpuMesh { chunks, materials, geometry_bytes, texture_bytes }
     }
 

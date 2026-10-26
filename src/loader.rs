@@ -23,6 +23,7 @@ pub struct Progress {
 }
 impl Progress {
     fn stage(&self, s: &str) {
+        crate::log::line(&format!("stage: {s}"));
         *self.stage.lock().unwrap() = s.to_string();
     }
 }
@@ -258,8 +259,25 @@ fn finish(b: &mut Builder, out: &mut Vec<RawPiece>) {
         return;
     }
     let material = b.material;
-    let nb = std::mem::replace(b, Builder::new(material));
-    let uv = if nb.any_uv { Some(nb.uv) } else { None };
+    let mut nb = std::mem::replace(b, Builder::new(material));
+    // give back the spare capacity vectors grow into, which can be close to half of their size
+    nb.pos.shrink_to_fit();
+    nb.nrm.shrink_to_fit();
+    nb.idx.shrink_to_fit();
+    nb.map = FxHashMap::default();
+    if nb.any_need_n {
+        nb.src.shrink_to_fit();
+        nb.need_n.shrink_to_fit();
+    } else {
+        nb.src = Vec::new();
+        nb.need_n = Vec::new();
+    }
+    let uv = if nb.any_uv {
+        nb.uv.shrink_to_fit();
+        Some(nb.uv)
+    } else {
+        None
+    };
     out.push(RawPiece {
         chunk: Chunk { pos: nb.pos, nrm: nb.nrm, uv, idx: nb.idx, material },
         src: nb.src,
@@ -300,16 +318,29 @@ pub fn load(path: &Path, progress: &Progress) -> Result<LoadResult, String> {
         mats: Vec<String>,
         libs: Vec<String>,
         last_mat: Option<String>,
+        faces: usize,
+        corners: usize,
     }
     let scans: Vec<Scan> = ranges
         .par_iter()
         .map(|&(s, e)| {
-            let mut sc = Scan { v: 0, vt: 0, vn: 0, mats: Vec::new(), libs: Vec::new(), last_mat: None };
+            let mut sc = Scan { v: 0, vt: 0, vn: 0, mats: Vec::new(), libs: Vec::new(), last_mat: None, faces: 0, corners: 0 };
             for l in lines(&data[s..e]) {
                 match kind(l) {
                     (Kind::V, _) => sc.v += 1,
                     (Kind::Vt, _) => sc.vt += 1,
                     (Kind::Vn, _) => sc.vn += 1,
+                    (Kind::F, o) => {
+                        sc.faces += 1;
+                        let mut prev_ws = true;
+                        for &c in &l[o..] {
+                            let ws = c == b' ' || c == b'\t';
+                            if prev_ws && !ws {
+                                sc.corners += 1;
+                            }
+                            prev_ws = ws;
+                        }
+                    }
                     (Kind::UseMtl, o) => {
                         let n = rest_str(l, o);
                         if !sc.mats.contains(&n) {
@@ -331,6 +362,30 @@ pub fn load(path: &Path, progress: &Progress) -> Result<LoadResult, String> {
     let nvn: usize = scans.iter().map(|s| s.vn).sum();
     if nv == 0 {
         return Err("No vertices found. Check that this is a mesh OBJ.".into());
+    }
+    // ---- will it fit in memory? Estimate the peak and compare with what Windows says is free.
+    let faces: usize = scans.iter().map(|s| s.faces).sum();
+    let corners: usize = scans.iter().map(|s| s.corners).sum();
+    let est_tris = corners.saturating_sub(2 * faces) as u64;
+    let est_verts = (nv.max(nvt).max(nvn) as f64 * 1.15) as u64;
+    let globals = nv as u64 * 12 + nvt as u64 * 8 + nvn as u64 * 12;
+    let pieces = est_verts * (12 + 8 + 8 + if nvn == 0 { 5 } else { 0 }) + est_tris * 12;
+    let peak = globals + pieces + (64 << 20) * threads as u64;
+    let mem = crate::log::memory();
+    crate::log::line(&format!(
+        "load {}: {} bytes, {nv} v, {nvt} vt, {nvn} vn, {faces} faces, ~{est_tris} tris, estimated peak {}, memory {:?}",
+        path.display(), total, crate::log::gb(peak), mem.map(|(a, c, t)| (crate::log::gb(a), crate::log::gb(c), crate::log::gb(t)))
+    ));
+    if let Some((avail, commit, _total_ram)) = mem {
+        if peak > commit {
+            return Err(format!(
+                "Not enough memory. This file needs about {} and only {} is free on this PC. Close other apps, or open it on a PC with more memory.",
+                crate::log::gb(peak), crate::log::gb(commit)
+            ));
+        }
+        if peak > avail {
+            progress.stage("Low on memory, this may be slow");
+        }
     }
 
     // material table: 0 is the default material
@@ -363,9 +418,16 @@ pub fn load(path: &Path, progress: &Progress) -> Result<LoadResult, String> {
 
     // ---- pass 2: vertex data
     progress.stage("Reading vertices");
-    let mut positions = vec![[0f32; 3]; nv];
-    let mut texcoords = vec![[0f32; 2]; nvt];
-    let mut normals = vec![[0f32; 3]; nvn];
+    let oom = |what: &str| format!("Not enough memory to read the {what}. Close other apps, or open the file on a PC with more memory.");
+    let mut positions: Vec<[f32; 3]> = Vec::new();
+    positions.try_reserve_exact(nv).map_err(|_| oom("vertices"))?;
+    positions.resize(nv, [0.0; 3]);
+    let mut texcoords: Vec<[f32; 2]> = Vec::new();
+    texcoords.try_reserve_exact(nvt).map_err(|_| oom("UVs"))?;
+    texcoords.resize(nvt, [0.0; 2]);
+    let mut normals: Vec<[f32; 3]> = Vec::new();
+    normals.try_reserve_exact(nvn).map_err(|_| oom("normals"))?;
+    normals.resize(nvn, [0.0; 3]);
     {
         let mut ps: &mut [[f32; 3]] = &mut positions;
         let mut ts: &mut [[f32; 2]] = &mut texcoords;
@@ -604,6 +666,7 @@ pub fn load(path: &Path, progress: &Progress) -> Result<LoadResult, String> {
         .collect();
     drop(texcoords);
 
+    crate::log::line(&format!("faces built in {:.1} s", t0.elapsed().as_secs_f32()));
     let mut stats = MeshStats {
         verts: nv as u64,
         uvs: nvt as u64,

@@ -42,7 +42,7 @@ pub fn run(obj: &str, out: &str) -> Result<(), String> {
     .map_err(|e| format!("device: {e}"))?;
 
     let progress = Progress::default();
-    let data = loader::load(Path::new(obj), &progress)?;
+    let mut data = loader::load(Path::new(obj), &progress)?;
     let st = &data.stats;
     report += &format!(
         "file: {} ({} bytes)\nload: {:.2} s\ntriangles: {}\nvertices: {}\ngpu vertices: {}\npieces: {}\nuvs: {} normals: {}\ndegenerate: {} invalid: {}\npieces without uv: {}\nmaterials: {}\n",
@@ -64,7 +64,7 @@ pub fn run(obj: &str, out: &str) -> Result<(), String> {
 
     let t0 = std::time::Instant::now();
     let mut r = Renderer::new(&device, &queue);
-    let mesh = r.upload(&device, &queue, &data);
+    let mesh = r.upload(&device, &queue, &mut data);
     report += &format!("upload: {:.2} s, geometry {} bytes, textures {} bytes\n", t0.elapsed().as_secs_f32(), mesh.geometry_bytes, mesh.texture_bytes);
 
     // frame the model the same way the app does for its starting view

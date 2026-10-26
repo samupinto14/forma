@@ -175,8 +175,10 @@ impl FormaApp {
         let gpu_error = Arc::new(AtomicBool::new(false));
         let renderer = cc.wgpu_render_state.as_ref().map(|rs| {
             let flag = gpu_error.clone();
+            let info = rs.adapter.get_info();
+            crate::log::line(&format!("Forma {} on {} ({:?}, {:?}), memory {:?}", crate::VERSION, info.name, info.backend, info.device_type, crate::log::memory().map(|m| (crate::log::gb(m.0), crate::log::gb(m.2)))));
             rs.device.on_uncaptured_error(Box::new(move |e| {
-                eprintln!("graphics error: {e}");
+                crate::log::line(&format!("graphics error: {e}"));
                 flag.store(true, Ordering::Relaxed);
             }));
             Renderer::new(&rs.device, &rs.queue)
@@ -246,11 +248,13 @@ impl FormaApp {
         let Ok(res) = job.rx.try_recv() else { return };
         let job = self.job.take().unwrap();
         match res {
-            Err(e) => self.toast(format!("Could not load {}. {e}", job.name), 7.0),
-            Ok(data) => {
+            Err(e) => {
+                crate::log::line(&format!("load failed: {e}"));
+                self.toast(format!("Could not load {}. {e}", job.name), 9.0)
+            }
+            Ok(mut data) => {
                 let (Some(rs), Some(r)) = (rs, self.renderer.as_ref()) else { return };
-                let gpu = r.upload(&rs.device, &rs.queue, &data);
-                let textures = data
+                let textures: Vec<TexInfo> = data
                     .materials
                     .iter()
                     .filter_map(|m| {
@@ -262,6 +266,9 @@ impl FormaApp {
                         })
                     })
                     .collect();
+                crate::log::line(&format!("upload start: {} pieces, memory {:?}", data.chunks.len(), crate::log::memory().map(|m| crate::log::gb(m.0))));
+                let gpu = r.upload(&rs.device, &rs.queue, &mut data);
+                crate::log::line(&format!("upload done: geometry {} textures {}", gpu.geometry_bytes, gpu.texture_bytes));
                 let tier = &mut self.tiers[job.tier];
                 let n = tier.versions.len() as u32 + 1;
                 let tris = data.stats.tris;
