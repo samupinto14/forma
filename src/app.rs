@@ -634,11 +634,11 @@ impl eframe::App for FormaApp {
                     let lvl = self.tier_level(t);
                     let dot = match lvl { Some(Lvl::Ok) => OK, Some(Lvl::Warn) => WARN, Some(Lvl::Bad) => BAD, None => LINE };
                     let sel = self.active == t;
-                    let txt = RichText::new(format!("●  {}", TIERS[t])).size(13.5).strong().color(if sel { FG } else { MUTED });
+                    let txt = RichText::new(format!("     {}", TIERS[t])).size(13.5).strong().color(if sel { FG } else { MUTED });
                     let btn = egui::Button::new(txt).fill(if sel { RAISED } else { PANEL }).stroke(Stroke::new(1.0_f32, if sel { ACCENT } else { LINE }));
                     let r = ui.add(btn);
                     // recolour the dot
-                    let p = Pos2::new(r.rect.left() + 14.5, r.rect.center().y);
+                    let p = Pos2::new(r.rect.left() + 16.0, r.rect.center().y);
                     ui.painter().circle_filled(p, 4.0, dot);
                     if r.clicked() && self.active != t {
                         self.active = t;
@@ -774,17 +774,26 @@ impl eframe::App for FormaApp {
                     if v.textures.is_empty() {
                         ui.label(RichText::new("No textures for this version.").color(MUTED));
                     }
+                    // the tiles of one asset share a long prefix: show only the part that tells them apart
+                    let names: Vec<&str> = v.textures.iter().map(|t| t.name.as_str()).collect();
+                    let mut common = names.first().map(|n| n.len()).unwrap_or(0);
+                    for n in &names {
+                        common = common.min(names[0].bytes().zip(n.bytes()).take_while(|(a, b)| a == b).count());
+                    }
+                    let cut = if names.len() > 1 && common > 12 { common.saturating_sub(4) } else { 0 };
                     for t in &v.textures {
+                        let short = if cut > 0 && t.name.is_char_boundary(cut) { format!("…{}", &t.name[cut..]) } else { t.name.clone() };
+                        let detail = match &t.problem {
+                            None if t.ow > t.w.max(t.h) => (format!("{} px, shown {}", t.ow, t.w.max(t.h)), MUTED),
+                            None => (format!("{} px · {}", t.w.max(t.h), bytes(t.bytes)), MUTED),
+                            Some(p) => (p.clone(), WARN),
+                        };
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new(&t.name).size(12.0).color(FG));
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| match &t.problem {
-                                None => {
-                                    let shown = if t.ow > t.w.max(t.h) { format!("{} px, shown at {} · {}", t.ow, t.w.max(t.h), bytes(t.bytes)) } else { format!("{}×{} · {}", t.w, t.h, bytes(t.bytes)) };
-                                    ui.label(RichText::new(shown).monospace().size(11.0).color(MUTED));
-                                }
-                                Some(p) => {
-                                    ui.label(RichText::new(p).monospace().size(11.0).color(WARN));
-                                }
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.label(RichText::new(detail.0).monospace().size(11.0).color(detail.1));
+                                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                    ui.add(egui::Label::new(RichText::new(short).size(12.0).color(FG)).truncate()).on_hover_text(&t.name);
+                                });
                             });
                         });
                     }
@@ -989,12 +998,12 @@ impl eframe::App for FormaApp {
             let tools = Rect::from_min_size(rect.min + Vec2::new(10.0, 10.0), Vec2::new(220.0, 30.0));
             ui.allocate_new_ui(egui::UiBuilder::new().max_rect(tools), |ui| {
                 ui.horizontal(|ui| {
-                    if ui.add(egui::Button::new(RichText::new("⟲  Reset view").strong()).fill(Color32::from_rgba_unmultiplied(12, 14, 16, 200))).clicked() {
+                    if ui.add(egui::Button::new(RichText::new("Reset view  H").strong().color(Color32::from_rgb(0xe8, 0xea, 0xed))).fill(Color32::from_rgba_unmultiplied(12, 14, 16, 215)).stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 40)))).clicked() {
                         if let Some(rs) = rs.as_ref() {
                             self.reframe(rs, false);
                         }
                     }
-                    if ui.add(egui::Button::new(RichText::new("⌖  Centre").strong()).fill(Color32::from_rgba_unmultiplied(12, 14, 16, 200))).clicked() {
+                    if ui.add(egui::Button::new(RichText::new("Centre  F").strong().color(Color32::from_rgb(0xe8, 0xea, 0xed))).fill(Color32::from_rgba_unmultiplied(12, 14, 16, 215)).stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 40)))).clicked() {
                         if let Some(rs) = rs.as_ref() {
                             self.reframe(rs, true);
                         }
@@ -1085,11 +1094,12 @@ fn style(ctx: &egui::Context) {
     for w in [&mut v.widgets.inactive, &mut v.widgets.hovered, &mut v.widgets.active, &mut v.widgets.open] {
         w.rounding = egui::Rounding::same(6.0);
     }
+    v.override_text_color = Some(FG);
     ctx.set_visuals(v);
     ctx.style_mut(|s| {
         s.spacing.item_spacing = Vec2::new(6.0, 6.0);
         s.spacing.button_padding = Vec2::new(10.0, 5.0);
-        s.spacing.slider_width = 120.0;
+        s.spacing.slider_width = 92.0;
     });
 }
 

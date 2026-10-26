@@ -50,7 +50,9 @@ fn lit(n: vec3<f32>, albedo: vec3<f32>) -> vec3<f32> {
     let ground = vec3<f32>(0.08, 0.09, 0.10);
     let hemi = mix(ground, vec3<f32>(1.0, 1.0, 1.0), n.y * 0.5 + 0.5) * g.key.y;
     let k = max(dot(n, normalize(g.key_dir.xyz)), 0.0) * g.key.x;
-    return albedo * (hemi + vec3<f32>(k, k, k));
+    // keep the brightest lit point at the texture's own brightness, so lighting reveals form without blowing out
+    let norm = max(g.key.x + g.key.y, 1.0);
+    return albedo * (hemi + vec3<f32>(k, k, k)) / norm * 1.25;
 }
 
 fn hsv(h: f32, s: f32, v: f32) -> vec3<f32> {
