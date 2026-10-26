@@ -66,6 +66,7 @@ pub struct MeshStats {
     pub seconds: f32,
 }
 
+#[allow(dead_code)]
 pub struct LoadResult {
     pub name: String,
     pub path: PathBuf,
