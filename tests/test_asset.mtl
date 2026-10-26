@@ -1,0 +1,8 @@
+newmtl body
+Kd 1 1 1
+map_Kd textures\body_diffuse.png
+map_bump -bm 0.5 body_normal.png
+newmtl base
+Kd 0.8 0.8 0.8
+map_Kd base_rough.tga
+disp detail_disp.tif

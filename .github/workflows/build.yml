@@ -17,7 +17,23 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Build
-        run: cargo build --release
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force ci | Out-Null
+          cargo build --release *> ci/build.log
+          $code = $LASTEXITCODE
+          Get-Content ci/build.log -Tail 80
+          exit $code
+      - name: Self-test
+        shell: pwsh
+        run: |
+          python tests/gen.py tests
+          $exe = (Resolve-Path target/release/forma.exe).Path
+          foreach ($m in @('test_asset', 'blob', 'terrain')) {
+            $p = Start-Process -FilePath $exe -ArgumentList @('--selftest', "tests/$m.obj", "ci/$m") -Wait -PassThru -NoNewWindow
+            "$m exit $($p.ExitCode)" | Add-Content ci/selftest.txt
+          }
+          Get-Content ci/*.txt
       - name: Package
         shell: pwsh
         run: |
@@ -27,6 +43,22 @@ jobs:
         with:
           name: Forma-windows
           path: dist/Forma.exe
+      - name: Publish build report
+        if: always()
+        shell: pwsh
+        run: |
+          git config user.name "forma-ci"
+          git config user.email "forma-ci@users.noreply.github.com"
+          $sha = git rev-parse --short HEAD
+          Copy-Item -Recurse ci $env:RUNNER_TEMP/ci
+          git checkout --orphan ci-results
+          git rm -rf --cached . | Out-Null
+          Get-ChildItem -Force | Where-Object { $_.Name -ne '.git' } | Remove-Item -Recurse -Force
+          Copy-Item -Recurse $env:RUNNER_TEMP/ci/* .
+          "$sha" | Set-Content commit.txt
+          git add -A
+          git commit -m "Build report for $sha"
+          git push -f origin ci-results
       - name: Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2

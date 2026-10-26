@@ -2,7 +2,8 @@
 
 use crate::loader::{LoadResult, TextureImage};
 use eframe::egui;
-use eframe::egui_wgpu::RenderState;
+use eframe::egui_wgpu;
+use eframe::egui::mutex::RwLock;
 use eframe::wgpu;
 use eframe::wgpu::util::DeviceExt;
 
@@ -61,6 +62,7 @@ struct Targets {
     msaa: wgpu::TextureView,
     depth: wgpu::TextureView,
     resolve: wgpu::TextureView,
+    resolve_tex: wgpu::Texture,
 }
 
 pub struct Renderer {
@@ -85,8 +87,7 @@ pub fn hex_linear(rgb: [u8; 3], a: f32) -> [f32; 4] {
 }
 
 impl Renderer {
-    pub fn new(rs: &RenderState) -> Self {
-        let device = &rs.device;
+    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("forma shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
@@ -240,7 +241,7 @@ impl Renderer {
             ..Default::default()
         });
         let white_tex = device.create_texture_with_data(
-            &rs.queue,
+            queue,
             &wgpu::TextureDescriptor {
                 label: Some("white"),
                 size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
@@ -269,8 +270,7 @@ impl Renderer {
         }
     }
 
-    pub fn upload(&self, rs: &RenderState, data: &LoadResult) -> GpuMesh {
-        let device = &rs.device;
+    pub fn upload(&self, device: &wgpu::Device, queue: &wgpu::Queue, data: &LoadResult) -> GpuMesh {
         let mut geometry_bytes = 0u64;
         let mut texture_bytes = 0u64;
         let mut materials = Vec::with_capacity(data.materials.len());
@@ -279,7 +279,7 @@ impl Renderer {
             let (view, has_tex): (&wgpu::TextureView, bool) = match &m.texture {
                 Some(t) => {
                     texture_bytes += t.mips.iter().map(|l| l.len() as u64).sum::<u64>();
-                    owned = upload_texture(rs, t, &m.name);
+                    owned = upload_texture(device, queue, t, &m.name);
                     (&owned, true)
                 }
                 None => (&self.white, false),
@@ -317,12 +317,12 @@ impl Renderer {
         GpuMesh { chunks, materials, geometry_bytes, texture_bytes }
     }
 
-    pub fn set_lines(&mut self, rs: &RenderState, verts: &[LineVertex]) {
+    pub fn set_lines(&mut self, device: &wgpu::Device, verts: &[LineVertex]) {
         if verts.is_empty() {
             self.line_buf = None;
             return;
         }
-        let buf = rs.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("lines"),
             contents: bytemuck::cast_slice(verts),
             usage: wgpu::BufferUsages::VERTEX,
@@ -330,12 +330,11 @@ impl Renderer {
         self.line_buf = Some((buf, verts.len() as u32));
     }
 
-    fn ensure_targets(&mut self, rs: &RenderState, size: [u32; 2]) {
+    fn ensure_targets(&mut self, device: &wgpu::Device, egui_r: Option<&RwLock<egui_wgpu::Renderer>>, size: [u32; 2]) {
         let size = [size[0].max(1), size[1].max(1)];
         if self.targets.as_ref().map(|t| t.size == size).unwrap_or(false) {
             return;
         }
-        let device = &rs.device;
         let mk = |label: &str, format: wgpu::TextureFormat, samples: u32, usage: wgpu::TextureUsages| {
             device
                 .create_texture(&wgpu::TextureDescriptor {
@@ -352,20 +351,43 @@ impl Renderer {
         };
         let msaa = mk("msaa", COLOR_FORMAT, SAMPLES, wgpu::TextureUsages::RENDER_ATTACHMENT);
         let depth = mk("depth", DEPTH_FORMAT, SAMPLES, wgpu::TextureUsages::RENDER_ATTACHMENT);
-        let resolve = mk("viewport", COLOR_FORMAT, 1, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING);
-        let mut r = rs.renderer.write();
-        match self.texture_id {
-            Some(id) => r.update_egui_texture_from_wgpu_texture(device, &resolve, wgpu::FilterMode::Linear, id),
-            None => self.texture_id = Some(r.register_native_texture(device, &resolve, wgpu::FilterMode::Linear)),
+        let resolve_tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("viewport"),
+            size: wgpu::Extent3d { width: size[0], height: size[1], depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: COLOR_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let resolve = resolve_tex.create_view(&Default::default());
+        if let Some(er) = egui_r {
+            let mut r = er.write();
+            match self.texture_id {
+                Some(id) => r.update_egui_texture_from_wgpu_texture(device, &resolve, wgpu::FilterMode::Linear, id),
+                None => self.texture_id = Some(r.register_native_texture(device, &resolve, wgpu::FilterMode::Linear)),
+            }
         }
-        self.targets = Some(Targets { size, msaa, depth, resolve });
+        self.targets = Some(Targets { size, msaa, depth, resolve, resolve_tex });
     }
 
-    pub fn render(&mut self, rs: &RenderState, size: [u32; 2], g: &Globals, clear: [f32; 4], mesh: Option<&GpuMesh>, show_lines: bool) {
-        self.ensure_targets(rs, size);
+    #[allow(clippy::too_many_arguments)]
+    pub fn render(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        egui_r: Option<&RwLock<egui_wgpu::Renderer>>,
+        size: [u32; 2],
+        g: &Globals,
+        clear: [f32; 4],
+        mesh: Option<&GpuMesh>,
+        show_lines: bool,
+    ) {
+        self.ensure_targets(device, egui_r, size);
         let t = self.targets.as_ref().unwrap();
-        rs.queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(g));
-        let mut enc = rs.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("viewport") });
+        queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(g));
+        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("viewport") });
         {
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("viewport"),
@@ -412,12 +434,44 @@ impl Renderer {
                 }
             }
         }
-        rs.queue.submit(Some(enc.finish()));
+        queue.submit(Some(enc.finish()));
+    }
+
+    /// Read the last rendered frame back as tightly packed RGBA8 (used by the self-test).
+    pub fn read_pixels(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Option<(u32, u32, Vec<u8>)> {
+        let t = self.targets.as_ref()?;
+        let (w, h) = (t.size[0], t.size[1]);
+        let row = (w * 4 + 255) / 256 * 256;
+        let buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("readback"),
+            size: (row * h) as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("readback") });
+        enc.copy_texture_to_buffer(
+            wgpu::ImageCopyTexture { texture: &t.resolve_tex, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+            wgpu::ImageCopyBuffer { buffer: &buf, layout: wgpu::ImageDataLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: Some(h) } },
+            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        );
+        queue.submit(Some(enc.finish()));
+        let slice = buf.slice(..);
+        slice.map_async(wgpu::MapMode::Read, |_| {});
+        device.poll(wgpu::Maintain::Wait);
+        let data = slice.get_mapped_range();
+        let mut out = Vec::with_capacity((w * h * 4) as usize);
+        for y in 0..h {
+            let s = (y * row) as usize;
+            out.extend_from_slice(&data[s..s + (w * 4) as usize]);
+        }
+        drop(data);
+        buf.unmap();
+        Some((w, h, out))
     }
 }
 
-fn upload_texture(rs: &RenderState, t: &TextureImage, label: &str) -> wgpu::TextureView {
-    let max = rs.device.limits().max_texture_dimension_2d;
+fn upload_texture(device: &wgpu::Device, queue: &wgpu::Queue, t: &TextureImage, label: &str) -> wgpu::TextureView {
+    let max = device.limits().max_texture_dimension_2d;
     // skip mip levels that are bigger than the GPU allows
     let mut skip = 0usize;
     while skip + 1 < t.mips.len() && ((t.width >> skip).max(1) > max || (t.height >> skip).max(1) > max) {
@@ -425,7 +479,7 @@ fn upload_texture(rs: &RenderState, t: &TextureImage, label: &str) -> wgpu::Text
     }
     let (w, h) = ((t.width >> skip).max(1), (t.height >> skip).max(1));
     let levels = &t.mips[skip..];
-    let tex = rs.device.create_texture(&wgpu::TextureDescriptor {
+    let tex = device.create_texture(&wgpu::TextureDescriptor {
         label: Some(label),
         size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
         mip_level_count: levels.len() as u32,
@@ -437,7 +491,7 @@ fn upload_texture(rs: &RenderState, t: &TextureImage, label: &str) -> wgpu::Text
     });
     for (i, data) in levels.iter().enumerate() {
         let (lw, lh) = ((w >> i).max(1), (h >> i).max(1));
-        rs.queue.write_texture(
+        queue.write_texture(
             wgpu::ImageCopyTexture { texture: &tex, mip_level: i as u32, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
             data,
             wgpu::ImageDataLayout { offset: 0, bytes_per_row: Some(4 * lw), rows_per_image: Some(lh) },

@@ -179,7 +179,7 @@ impl FormaApp {
                 eprintln!("graphics error: {e}");
                 flag.store(true, Ordering::Relaxed);
             }));
-            Renderer::new(rs)
+            Renderer::new(&rs.device, &rs.queue)
         });
         let logo = image::load_from_memory(include_bytes!("../assets/logo.png")).ok().map(|img| {
             let img = img.resize(96, 96, image::imageops::FilterType::Lanczos3).to_rgba8();
@@ -249,7 +249,7 @@ impl FormaApp {
             Err(e) => self.toast(format!("Could not load {}. {e}", job.name), 7.0),
             Ok(data) => {
                 let (Some(rs), Some(r)) = (rs, self.renderer.as_ref()) else { return };
-                let gpu = r.upload(rs, &data);
+                let gpu = r.upload(&rs.device, &rs.queue, &data);
                 let textures = data
                     .materials
                     .iter()
@@ -391,7 +391,7 @@ impl FormaApp {
             v.push(LineVertex { pos: [cx, y + yl, cz], col: yg });
         }
         if let Some(r) = self.renderer.as_mut() {
-            r.set_lines(rs, &v);
+            r.set_lines(&rs.device, &v);
         }
     }
 
@@ -889,7 +889,7 @@ impl eframe::App for FormaApp {
                     let clear = hex_linear(bgc, 1.0);
                     let t = &self.tiers[self.active];
                     let mesh = t.versions.get(t.cur).map(|v| &v.gpu);
-                    r.render(rs, px, &g, clear, mesh, self.s.grid || self.s.axes);
+                    r.render(&rs.device, &rs.queue, Some(&*rs.renderer), px, &g, clear, mesh, self.s.grid || self.s.axes);
                     self.rendered_key = Some(key);
                 }
                 self.dirty = false;
