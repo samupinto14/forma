@@ -3,8 +3,6 @@ name: Build Forma for Windows
 on:
   push:
     branches: [main]
-  release:
-    types: [published]
   workflow_dispatch:
 
 permissions:
@@ -70,9 +68,22 @@ jobs:
           git add -A
           git commit -m "Build report for $sha"
           git push -f origin ci-results
-      - name: Attach to release
-        if: github.event_name == 'release'
+      - name: Read version
+        id: ver
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+          "version=$v" | Out-File -Append $env:GITHUB_OUTPUT
+          "pre=$($v.Contains('-'))".ToLower() | Out-File -Append $env:GITHUB_OUTPUT
+      - name: Publish release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.release.tag_name }}
+          tag_name: v${{ steps.ver.outputs.version }}
+          name: Forma ${{ steps.ver.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          prerelease: ${{ steps.ver.outputs.pre }}
           files: dist/Forma.exe
+          body: |
+            Download **Forma.exe** below and run it. Nothing to install.
+            The first time, Windows SmartScreen may warn about an unknown app: choose **More info**, then **Run anyway**.
