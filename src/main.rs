@@ -4,6 +4,7 @@ mod app;
 mod camera;
 mod loader;
 mod log;
+mod netcache;
 mod render;
 mod selftest;
 

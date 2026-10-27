@@ -1,6 +1,6 @@
 [package]
 name = "forma"
-version = "5.0.0-alpha.5"
+version = "5.0.0-alpha.6"
 edition = "2021"
 description = "Forma, a fast view-only OBJ asset reviewer"
 build = "build.rs"
@@ -19,7 +19,7 @@ rustc-hash = "2"
 serde = { version = "1", features = ["derive"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_System_SystemInformation"] }
+windows-sys = { version = "0.59", features = ["Win32_System_SystemInformation", "Win32_Storage_FileSystem"] }
 
 [build-dependencies]
 winresource = "0.1"

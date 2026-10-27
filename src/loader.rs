@@ -317,7 +317,10 @@ fn pack_n(n: [f32; 3]) -> [i16; 4] {
 
 pub fn load(path: &Path, progress: &Progress, tex: TexLimit, proxy_tris: u64) -> Result<LoadResult, String> {
     let t0 = std::time::Instant::now();
-    let file = std::fs::File::open(path).map_err(|e| format!("Could not open the file: {e}"))?;
+    // network files are copied locally first (see netcache.rs); mapping them directly can crash on a drop-out
+    let source = crate::netcache::local_source(path, progress)?;
+    progress.done.store(0, Ordering::Relaxed);
+    let file = std::fs::File::open(&source).map_err(|e| format!("Could not open the file: {e}"))?;
     let mmap = unsafe { memmap2::Mmap::map(&file) }.map_err(|e| format!("Could not read the file: {e}"))?;
     let data: &[u8] = &mmap;
     let total = data.len() as u64;

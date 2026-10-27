@@ -40,6 +40,13 @@ jobs:
           "mesa: $($asset.name)" | Add-Content ci/selftest.txt
           $env:GALLIUM_DRIVER = "llvmpipe"
           $exe = (Resolve-Path cirun/forma.exe).Path
+          # the network-copy path, forced on a local file
+          $env:FORMA_FORCE_CACHE = '1'
+          $p = Start-Process -FilePath $exe -ArgumentList @('--selftest', "tests/terrain.obj", "ci/netcopy") -Wait -PassThru -NoNewWindow
+          "netcopy exit $($p.ExitCode)" | Add-Content ci/selftest.txt
+          $p = Start-Process -FilePath $exe -ArgumentList @('--selftest', "tests/terrain.obj", "ci/netcopy2") -Wait -PassThru -NoNewWindow
+          "netcopy2 exit $($p.ExitCode)" | Add-Content ci/selftest.txt
+          Remove-Item Env:FORMA_FORCE_CACHE
           foreach ($m in @('test_asset', 'blob', 'terrain', 'udim')) {
             if ($m -eq 'udim') { $env:FORMA_TEX_BUDGET = '500000000' } else { Remove-Item Env:FORMA_TEX_BUDGET -ErrorAction SilentlyContinue }
             $p = Start-Process -FilePath $exe -ArgumentList @('--selftest', "tests/$m.obj", "ci/$m") -Wait -PassThru -NoNewWindow
