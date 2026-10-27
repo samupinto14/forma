@@ -1,0 +1,21 @@
+found adapter: llvmpipe (LLVM 23.1.2, 256 bits) (Gl, Cpu)
+adapter: llvmpipe (LLVM 23.1.2, 256 bits) (Gl, Cpu)
+file: terrain.obj (429972243 bytes)
+load: 0.72 s
+triangles: 7597202
+vertices: 3802500
+gpu vertices: 3837618
+pieces: 19
+uvs: 3802500 normals: 0
+degenerate: 0 invalid: 0
+pieces without uv: 0
+materials: 1
+  material '' kd=[0.8, 0.8, 0.8] texture=None 
+up axis: Some([0.0, 1.0, 0.0])
+light version: 1625668 triangles
+upload: 0.10 s, geometry 198619728 bytes, textures 0 bytes
+render grey: 8207 ms
+render textured: 7737 ms
+render checker: 8702 ms
+render normals: 8076 ms
+render shape: 7499 ms

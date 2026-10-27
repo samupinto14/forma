@@ -1,0 +1,7 @@
+mesa: mesa3d-26.2.4-release-msvc.7z
+netcopy exit 0
+netcopy2 exit 0
+test_asset exit 0
+blob exit 0
+terrain exit 0
+udim exit 0

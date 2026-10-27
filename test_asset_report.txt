@@ -1,0 +1,23 @@
+found adapter: llvmpipe (LLVM 23.1.2, 256 bits) (Gl, Cpu)
+adapter: llvmpipe (LLVM 23.1.2, 256 bits) (Gl, Cpu)
+file: test_asset.obj (7898 bytes)
+load: 0.00 s
+triangles: 109
+vertices: 104
+gpu vertices: 156
+pieces: 11
+uvs: 100 normals: 6
+degenerate: 1 invalid: 1
+pieces without uv: 0
+materials: 3
+  material '' kd=[0.8, 0.8, 0.8] texture=None 
+  material 'body' kd=[1.0, 1.0, 1.0] texture=Some("textures/body_diffuse.png") 512x512 10 mips
+  material 'base' kd=[0.8, 0.8, 0.8] texture=Some("base_rough.tga") 256x256 9 mips
+up axis: None
+light version: 0 triangles
+upload: 0.01 s, geometry 5676 bytes, textures 1747624 bytes
+render grey: 228 ms
+render textured: 8 ms
+render checker: 8 ms
+render normals: 7 ms
+render shape: 7 ms

@@ -1,0 +1,21 @@
+found adapter: llvmpipe (LLVM 23.1.2, 256 bits) (Gl, Cpu)
+adapter: llvmpipe (LLVM 23.1.2, 256 bits) (Gl, Cpu)
+file: blob.obj (41656280 bytes)
+load: 0.05 s
+triangles: 400000
+vertices: 200500
+gpu vertices: 209536
+pieces: 19
+uvs: 200500 normals: 200500
+degenerate: 1000 invalid: 0
+pieces without uv: 0
+materials: 1
+  material '' kd=[0.8, 0.8, 0.8] texture=None 
+up axis: None
+light version: 0 triangles
+upload: 0.02 s, geometry 10667008 bytes, textures 0 bytes
+render grey: 956 ms
+render textured: 783 ms
+render checker: 875 ms
+render normals: 814 ms
+render shape: 766 ms

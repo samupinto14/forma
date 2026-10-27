@@ -1,0 +1,51 @@
+found adapter: llvmpipe (LLVM 23.1.2, 256 bits) (Gl, Cpu)
+adapter: llvmpipe (LLVM 23.1.2, 256 bits) (Gl, Cpu)
+file: udim.obj (3941 bytes)
+load: 1.14 s
+triangles: 60
+vertices: 120
+gpu vertices: 120
+pieces: 30
+uvs: 120 normals: 0
+degenerate: 0 invalid: 0
+pieces without uv: 0
+materials: 31
+  material '' kd=[0.8, 0.8, 0.8] texture=None 
+  material 'scan_u1_v1' kd=[1.0, 1.0, 1.0] texture=Some("scan_u1_v1.png") 1024x1024 11 mips
+  material 'scan_u2_v1' kd=[1.0, 1.0, 1.0] texture=Some("scan_u2_v1.png") 1024x1024 11 mips
+  material 'scan_u3_v1' kd=[1.0, 1.0, 1.0] texture=Some("scan_u3_v1.png") 1024x1024 11 mips
+  material 'scan_u4_v1' kd=[1.0, 1.0, 1.0] texture=Some("scan_u4_v1.png") 1024x1024 11 mips
+  material 'scan_u5_v1' kd=[1.0, 1.0, 1.0] texture=Some("scan_u5_v1.png") 1024x1024 11 mips
+  material 'scan_u6_v1' kd=[1.0, 1.0, 1.0] texture=Some("scan_u6_v1.png") 1024x1024 11 mips
+  material 'scan_u1_v2' kd=[1.0, 1.0, 1.0] texture=Some("scan_u1_v2.png") 1024x1024 11 mips
+  material 'scan_u2_v2' kd=[1.0, 1.0, 1.0] texture=Some("scan_u2_v2.png") 1024x1024 11 mips
+  material 'scan_u3_v2' kd=[1.0, 1.0, 1.0] texture=Some("scan_u3_v2.png") 1024x1024 11 mips
+  material 'scan_u4_v2' kd=[1.0, 1.0, 1.0] texture=Some("scan_u4_v2.png") 1024x1024 11 mips
+  material 'scan_u5_v2' kd=[1.0, 1.0, 1.0] texture=Some("scan_u5_v2.png") 1024x1024 11 mips
+  material 'scan_u6_v2' kd=[1.0, 1.0, 1.0] texture=Some("scan_u6_v2.png") 1024x1024 11 mips
+  material 'scan_u1_v3' kd=[1.0, 1.0, 1.0] texture=Some("scan_u1_v3.png") 1024x1024 11 mips
+  material 'scan_u2_v3' kd=[1.0, 1.0, 1.0] texture=Some("scan_u2_v3.png") 1024x1024 11 mips
+  material 'scan_u3_v3' kd=[1.0, 1.0, 1.0] texture=Some("scan_u3_v3.png") 1024x1024 11 mips
+  material 'scan_u4_v3' kd=[1.0, 1.0, 1.0] texture=Some("scan_u4_v3.png") 1024x1024 11 mips
+  material 'scan_u5_v3' kd=[1.0, 1.0, 1.0] texture=Some("scan_u5_v3.png") 1024x1024 11 mips
+  material 'scan_u6_v3' kd=[1.0, 1.0, 1.0] texture=Some("scan_u6_v3.png") 1024x1024 11 mips
+  material 'scan_u1_v4' kd=[1.0, 1.0, 1.0] texture=Some("scan_u1_v4.png") 1024x1024 11 mips
+  material 'scan_u2_v4' kd=[1.0, 1.0, 1.0] texture=Some("scan_u2_v4.png") 1024x1024 11 mips
+  material 'scan_u3_v4' kd=[1.0, 1.0, 1.0] texture=Some("scan_u3_v4.png") 1024x1024 11 mips
+  material 'scan_u4_v4' kd=[1.0, 1.0, 1.0] texture=Some("scan_u4_v4.png") 1024x1024 11 mips
+  material 'scan_u5_v4' kd=[1.0, 1.0, 1.0] texture=Some("scan_u5_v4.png") 1024x1024 11 mips
+  material 'scan_u6_v4' kd=[1.0, 1.0, 1.0] texture=Some("scan_u6_v4.png") 1024x1024 11 mips
+  material 'scan_u1_v5' kd=[1.0, 1.0, 1.0] texture=Some("scan_u1_v5.png") 1024x1024 11 mips
+  material 'scan_u2_v5' kd=[1.0, 1.0, 1.0] texture=Some("scan_u2_v5.png") 1024x1024 11 mips
+  material 'scan_u3_v5' kd=[1.0, 1.0, 1.0] texture=Some("scan_u3_v5.png") 1024x1024 11 mips
+  material 'scan_u4_v5' kd=[1.0, 1.0, 1.0] texture=Some("scan_u4_v5.png") 1024x1024 11 mips
+  material 'scan_u5_v5' kd=[1.0, 1.0, 1.0] texture=Some("scan_u5_v5.png") 1024x1024 11 mips
+  material 'scan_u6_v5' kd=[1.0, 1.0, 1.0] texture=Some("scan_u6_v5.png") 1024x1024 11 mips
+up axis: Some([0.0, 1.0, 0.0])
+light version: 0 triangles
+upload: 0.07 s, geometry 4080 bytes, textures 167772120 bytes
+render grey: 227 ms
+render textured: 6 ms
+render checker: 6 ms
+render normals: 5 ms
+render shape: 5 ms
