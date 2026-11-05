@@ -10,6 +10,15 @@ use std::sync::mpsc::{channel, Receiver};
 use std::sync::Arc;
 use std::time::Instant;
 
+#[cfg(target_os = "macos")]
+const NAV_HINT: &str = "Drag to orbit around the model centre. Shift-drag or right-drag to pan. W A S D to move, Q and E for down and up, hold Shift to go faster. Two-finger scroll moves forward and back, pinch or Cmd + scroll zooms to the cursor.";
+#[cfg(not(target_os = "macos"))]
+const NAV_HINT: &str = "Drag to orbit around the model centre, right-drag to pan. W A S D to move, Q and E for down and up, hold Shift to go faster. Scroll moves forward and back, Ctrl + scroll zooms to the cursor.";
+#[cfg(target_os = "macos")]
+const OVERLAY_HINT: &str = "Drag orbit · WASD move · Pinch or Cmd + scroll zoom · F centre · H reset";
+#[cfg(not(target_os = "macos"))]
+const OVERLAY_HINT: &str = "Drag orbit · WASD move · Ctrl + scroll zoom · F centre · H reset";
+
 // ---------------------------------------------------------------- look
 
 const ACCENT: Color32 = Color32::from_rgb(0x7f, 0xae, 0xff);
@@ -190,6 +199,8 @@ pub struct FormaApp {
     drag_t: Instant,
     rendered_key: Option<(usize, usize)>,
     gpu_kind: Option<eframe::wgpu::DeviceType>,
+    /// Apple silicon shares fast memory with the CPU and copes with far more than typical built-in graphics.
+    gpu_apple: bool,
     last_cam: Option<(Vec3, Quat)>,
     moving_until: Instant,
     drew_light: bool,
@@ -241,6 +252,7 @@ impl FormaApp {
             drag_t: Instant::now(),
             rendered_key: None,
             gpu_kind: cc.wgpu_render_state.as_ref().map(|rs| rs.adapter.get_info().device_type),
+            gpu_apple: cc.wgpu_render_state.as_ref().map(|rs| { let i = rs.adapter.get_info(); i.vendor == 0x106B || i.name.contains("Apple") }).unwrap_or(false),
             last_cam: None,
             moving_until: Instant::now(),
             drew_light: false,
@@ -250,9 +262,16 @@ impl FormaApp {
     /// Texture detail for the next load. Auto keeps all textures together within a share of graphics memory
     /// that suits this card: integrated graphics borrow system memory, so they get a smaller share.
     fn tex_limit(&self) -> loader::TexLimit {
-        let integrated = matches!(self.gpu_kind, Some(eframe::wgpu::DeviceType::IntegratedGpu) | Some(eframe::wgpu::DeviceType::Cpu));
+        let integrated = !self.gpu_apple && matches!(self.gpu_kind, Some(eframe::wgpu::DeviceType::IntegratedGpu) | Some(eframe::wgpu::DeviceType::Cpu));
         let ram = crate::log::memory().map(|m| m.2).unwrap_or(8_000_000_000);
-        let auto = if integrated { ((ram as f64 * 0.12) as u64).clamp(500_000_000, 2_500_000_000) } else { 6_000_000_000 };
+        let auto = if self.gpu_apple {
+            // unified memory: textures come out of the same RAM as everything else
+            ((ram as f64 * 0.25) as u64).clamp(1_000_000_000, 8_000_000_000)
+        } else if integrated {
+            ((ram as f64 * 0.12) as u64).clamp(500_000_000, 2_500_000_000)
+        } else {
+            6_000_000_000
+        };
         match self.s.tex_size {
             TexSize::Auto => loader::TexLimit { budget: Some(auto), min_skip: 0, off: false },
             TexSize::Full => loader::TexLimit { budget: None, min_skip: 0, off: false },
@@ -289,7 +308,7 @@ impl FormaApp {
         let p2 = progress.clone();
         let path2 = path.clone();
         let limit = self.tex_limit();
-        let integrated = matches!(self.gpu_kind, Some(eframe::wgpu::DeviceType::IntegratedGpu) | Some(eframe::wgpu::DeviceType::Cpu));
+        let integrated = !self.gpu_apple && matches!(self.gpu_kind, Some(eframe::wgpu::DeviceType::IntegratedGpu) | Some(eframe::wgpu::DeviceType::Cpu));
         let proxy_tris: u64 = if integrated { 1_500_000 } else { 6_000_000 };
         std::thread::spawn(move || {
             let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| loader::load(&path2, &p2, limit, proxy_tris)))
@@ -748,7 +767,7 @@ impl eframe::App for FormaApp {
                 ui.checkbox(&mut self.s.swap_xy, "Swap X and Y");
                 ui.checkbox(&mut self.s.light_moving, "Light version while moving")
                     .on_hover_text("Draws a lighter copy of heavy models while the view moves, and full detail as soon as it stops.");
-                ui.label(RichText::new("Drag to orbit around the model centre, right-drag to pan. W A S D to move, Q and E for down and up, hold Shift to go faster. Scroll moves forward and back, Ctrl + scroll zooms to the cursor.").size(11.5).color(MUTED));
+                ui.label(RichText::new(NAV_HINT).size(11.5).color(MUTED));
                 ui.add_space(12.0);
                 heading(ui, "LIGHTING");
                 ui.horizontal(|ui| {
@@ -1069,7 +1088,7 @@ impl eframe::App for FormaApp {
             ui.painter().text(
                 Pos2::new(rect.right() - 12.0, rect.top() + 18.0),
                 egui::Align2::RIGHT_CENTER,
-                "Drag orbit · WASD move · Ctrl + scroll zoom · F centre · H reset",
+                OVERLAY_HINT,
                 egui::FontId::proportional(11.0),
                 Color32::from_rgb(0xd6, 0xd9, 0xdd),
             );

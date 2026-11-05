@@ -13,10 +13,23 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 pub fn cache_dir() -> PathBuf {
+    #[cfg(target_os = "macos")]
+    if let Some(h) = std::env::var_os("HOME") {
+        return PathBuf::from(h).join("Library").join("Caches").join("Forma");
+    }
     crate::log::path().parent().map(|p| p.join("cache")).unwrap_or_else(|| std::env::temp_dir().join("forma-cache"))
 }
 
-/// True for UNC paths (\\server\share) and drive letters mapped to a network share.
+#[cfg(target_os = "macos")]
+fn statfs(path: &Path) -> Option<libc::statfs> {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
+    let mut st: libc::statfs = unsafe { std::mem::zeroed() };
+    (unsafe { libc::statfs(c.as_ptr(), &mut st) } == 0).then_some(st)
+}
+
+/// True for UNC paths (\\server\share), drive letters mapped to a network share, and network volumes on a Mac
+/// (SMB, AFP, NFS, WebDAV).
 pub fn is_remote(path: &Path) -> bool {
     if std::env::var_os("FORMA_FORCE_CACHE").is_some() {
         return true;
@@ -35,6 +48,10 @@ pub fn is_remote(path: &Path) -> bool {
             return unsafe { GetDriveTypeW(root.as_ptr()) } == 4;
         }
     }
+    #[cfg(target_os = "macos")]
+    if let Some(st) = statfs(path) {
+        return st.f_flags & (libc::MNT_LOCAL as u32) == 0;
+    }
     false
 }
 
@@ -47,6 +64,10 @@ fn free_space(dir: &Path) -> Option<u64> {
         if unsafe { GetDiskFreeSpaceExW(w.as_ptr(), &mut free, std::ptr::null_mut(), std::ptr::null_mut()) } != 0 {
             return Some(free);
         }
+    }
+    #[cfg(target_os = "macos")]
+    if let Some(st) = statfs(dir) {
+        return Some(st.f_bavail as u64 * st.f_bsize as u64);
     }
     let _ = dir;
     None
@@ -93,7 +114,7 @@ pub fn local_source(path: &Path, progress: &Progress) -> Result<PathBuf, String>
     if let Some(f) = free_space(&dir) {
         if f < size + (512 << 20) {
             return Err(format!(
-                "The file is on a network drive and needs to be copied to this PC first, but there is only {} free on the local disk and the file is {}.",
+                "The file is on a network drive and needs to be copied to this computer first, but there is only {} free on the local disk and the file is {}.",
                 crate::log::gb(f),
                 crate::log::gb(size)
             ));

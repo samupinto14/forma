@@ -1,4 +1,4 @@
-name: Build Forma for Windows
+name: Build Forma for Windows and macOS
 
 on:
   push:
@@ -64,38 +64,100 @@ jobs:
         with:
           name: Forma-windows
           path: dist/Forma.exe
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ci-windows
+          path: ci
+
+  mac:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - name: Build app
+        run: |
+          mkdir -p ci
+          set -o pipefail
+          ./macos/bundle.sh 2>&1 | tee ci/build-mac.log | tail -80
+      - name: Self-test
+        run: |
+          python3 -m venv .venv && . .venv/bin/activate && pip install --quiet pillow
+          python tests/gen.py tests
+          python tests/gen_udim.py tests
+          exe=dist/Forma.app/Contents/MacOS/forma
+          system_profiler SPDisplaysDataType | head -12 >> ci/selftest.txt || true
+          r=0; FORMA_FORCE_CACHE=1 $exe --selftest tests/terrain.obj ci/netcopy || r=$?; echo "netcopy exit $r" >> ci/selftest.txt
+          for m in test_asset blob terrain udim; do
+            if [ "$m" = udim ]; then export FORMA_TEX_BUDGET=500000000; else unset FORMA_TEX_BUDGET; fi
+            r=0; $exe --selftest tests/$m.obj ci/$m || r=$?; echo "$m exit $r" >> ci/selftest.txt
+          done
+          cp ~/Library/Logs/Forma/forma-log.txt ci/forma-log.txt 2>/dev/null || true
+          cat ci/*.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Forma-mac
+          path: |
+            dist/Forma.dmg
+            dist/Forma-mac.zip
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ci-mac
+          path: ci
+
+  publish:
+    needs: [windows, mac]
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: art
       - name: Read version
         id: ver
-        shell: pwsh
         run: |
-          $v = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
-          "version=$v" | Out-File -Append $env:GITHUB_OUTPUT
-          "pre=$($v.Contains('-'))".ToLower() | Out-File -Append $env:GITHUB_OUTPUT
+          v=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          echo "version=$v" >> $GITHUB_OUTPUT
+          if [[ "$v" == *-* ]]; then echo "pre=true" >> $GITHUB_OUTPUT; else echo "pre=false" >> $GITHUB_OUTPUT; fi
+          ls -R art | head -50
       - name: Publish release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: needs.windows.result == 'success'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.ver.outputs.version }}
           name: Forma ${{ steps.ver.outputs.version }}
           target_commitish: ${{ github.sha }}
           prerelease: ${{ steps.ver.outputs.pre }}
-          files: dist/Forma.exe
+          files: |
+            art/Forma-windows/Forma.exe
+            art/Forma-mac/Forma.dmg
+            art/Forma-mac/Forma-mac.zip
           body: |
-            Download **Forma.exe** below and run it. Nothing to install.
-            The first time, Windows SmartScreen may warn about an unknown app: choose **More info**, then **Run anyway**.
+            **Windows**: download **Forma.exe** and run it. Nothing to install.
+            The first time, Windows SmartScreen may warn about an unknown app. Choose **More info**, then **Run anyway**.
+
+            **Mac** (Apple silicon and Intel, macOS 11 or later): download **Forma.dmg**, open it and drag Forma into Applications.
+            Forma isn't signed with an Apple developer account, so the first time macOS says it can't check it. Open **System Settings → Privacy & Security**, scroll down and click **Open Anyway** next to Forma. You only need to do this once.
       - name: Publish build report
-        if: always() && github.event_name == 'push'
-        shell: pwsh
+        if: always()
         run: |
           git config user.name "forma-ci"
           git config user.email "forma-ci@users.noreply.github.com"
-          $sha = git rev-parse --short HEAD
-          Copy-Item -Recurse ci $env:RUNNER_TEMP/ci
+          sha=$(git rev-parse --short HEAD)
+          mkdir -p "$RUNNER_TEMP/rep"
+          cp -R art/ci-windows/. "$RUNNER_TEMP/rep/" 2>/dev/null || true
+          mkdir -p "$RUNNER_TEMP/rep/mac" && cp -R art/ci-mac/. "$RUNNER_TEMP/rep/mac/" 2>/dev/null || true
+          echo "windows: ${{ needs.windows.result }} mac: ${{ needs.mac.result }}" > "$RUNNER_TEMP/rep/jobs.txt"
           git checkout --orphan ci-results
-          git rm -rf --cached . | Out-Null
-          Get-ChildItem -Force | Where-Object { $_.Name -ne '.git' } | Remove-Item -Recurse -Force
-          Copy-Item -Recurse $env:RUNNER_TEMP/ci/* .
-          "$sha" | Set-Content commit.txt
+          git rm -rf --cached . > /dev/null
+          find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          cp -R "$RUNNER_TEMP/rep/." .
+          echo "$sha" > commit.txt
           git add -A
           git commit -m "Build report for $sha"
           git push -f origin ci-results

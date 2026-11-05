@@ -382,7 +382,7 @@ pub fn load(path: &Path, progress: &Progress, tex: TexLimit, proxy_tris: u64) ->
     if nv == 0 {
         return Err("No vertices found. Check that this is a mesh OBJ.".into());
     }
-    // ---- will it fit in memory? Estimate the peak and compare with what Windows says is free.
+    // ---- will it fit in memory? Estimate the peak and compare with what the system says is free.
     let faces: usize = scans.iter().map(|s| s.faces).sum();
     let corners: usize = scans.iter().map(|s| s.corners).sum();
     let est_tris = corners.saturating_sub(2 * faces) as u64;
@@ -398,7 +398,7 @@ pub fn load(path: &Path, progress: &Progress, tex: TexLimit, proxy_tris: u64) ->
     if let Some((avail, commit, _total_ram)) = mem {
         if peak > commit {
             return Err(format!(
-                "Not enough memory. This file needs about {} and only {} is free on this PC. Close other apps, or open it on a PC with more memory.",
+                "Not enough memory. This file needs about {} and only {} is free on this computer. Close other apps, or open it on a computer with more memory.",
                 crate::log::gb(peak), crate::log::gb(commit)
             ));
         }
@@ -437,7 +437,7 @@ pub fn load(path: &Path, progress: &Progress, tex: TexLimit, proxy_tris: u64) ->
 
     // ---- pass 2: vertex data
     progress.stage("Reading vertices");
-    let oom = |what: &str| format!("Not enough memory to read the {what}. Close other apps, or open the file on a PC with more memory.");
+    let oom = |what: &str| format!("Not enough memory to read the {what}. Close other apps, or open the file on a computer with more memory.");
     let mut positions: Vec<[f32; 3]> = Vec::new();
     positions.try_reserve_exact(nv).map_err(|_| oom("vertices"))?;
     positions.resize(nv, [0.0; 3]);

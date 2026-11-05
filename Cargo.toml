@@ -1,8 +1,8 @@
 [package]
 name = "forma"
-version = "5.0.0-alpha.6"
+version = "5.1.0-alpha.1"
 edition = "2021"
-description = "Forma, a fast view-only OBJ asset reviewer"
+description = "Forma, a fast view-only OBJ asset reviewer for Windows and macOS"
 build = "build.rs"
 
 [dependencies]
@@ -20,6 +20,9 @@ serde = { version = "1", features = ["derive"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_System_SystemInformation", "Win32_Storage_FileSystem"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
 
 [build-dependencies]
 winresource = "0.1"
