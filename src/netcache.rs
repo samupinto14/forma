@@ -6,7 +6,6 @@
 //! opening the same file again later skips the network entirely.
 
 use crate::loader::Progress;
-use std::hash::{Hash, Hasher};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
@@ -80,37 +79,10 @@ pub fn local_source(path: &Path, progress: &Progress) -> Result<PathBuf, String>
     }
     let meta = std::fs::metadata(path).map_err(|e| format!("Could not reach the file on the network: {e}"))?;
     let size = meta.len();
-    let mut h = rustc_hash::FxHasher::default();
-    path.to_string_lossy().to_lowercase().hash(&mut h);
-    size.hash(&mut h);
-    meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs()).hash(&mut h);
     let dir = cache_dir();
     std::fs::create_dir_all(&dir).map_err(|e| format!("Could not create the local cache folder: {e}"))?;
-    let target = dir.join(format!("{:016x}.obj", h.finish()));
-    if std::fs::metadata(&target).map(|m| m.len() == size).unwrap_or(false) {
-        crate::log::line(&format!("network file: using local copy {}", target.display()));
-        return Ok(target);
-    }
-
-    // make room: drop older cached copies (oldest first) until this one fits with some margin
-    let mut old: Vec<(std::time::SystemTime, PathBuf, u64)> = std::fs::read_dir(&dir)
-        .map(|rd| {
-            rd.filter_map(|e| e.ok())
-                .filter_map(|e| {
-                    let m = e.metadata().ok()?;
-                    Some((m.modified().ok()?, e.path(), m.len()))
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    old.sort();
-    let need = size + (2 << 30);
-    for (_, p, _) in &old {
-        if free_space(&dir).map(|f| f >= need).unwrap_or(true) {
-            break;
-        }
-        let _ = std::fs::remove_file(p);
-    }
+    static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let target = dir.join(format!("forma-{}-{}.obj", std::process::id(), N.fetch_add(1, Ordering::Relaxed)));
     if let Some(f) = free_space(&dir) {
         if f < size + (512 << 20) {
             return Err(format!(
@@ -126,6 +98,7 @@ pub fn local_source(path: &Path, progress: &Progress) -> Result<PathBuf, String>
     crate::log::line(&format!("network file: copying {} bytes to {}", size, target.display()));
     progress.total.store(size * 4, Ordering::Relaxed);
     let part = target.with_extension("part");
+    let mut part_guard = TempCopy(Some(part.clone())); // removes the half-written copy on any failure below
     let mut out = std::io::BufWriter::with_capacity(8 << 20, std::fs::File::create(&part).map_err(|e| format!("Could not write the local copy: {e}"))?);
     let mut src = std::fs::File::open(path).map_err(|e| format!("Could not open the file: {e}"))?;
     let mut buf = vec![0u8; 8 << 20];
@@ -145,7 +118,6 @@ pub fn local_source(path: &Path, progress: &Progress) -> Result<PathBuf, String>
                 crate::log::line(&format!("network read failed at {off} (attempt {failures}): {e}"));
                 if failures > 10 {
                     drop(out);
-                    let _ = std::fs::remove_file(&part);
                     return Err(format!("The network connection kept failing while reading the file ({e}). Check the connection and try again."));
                 }
                 *progress.stage.lock().unwrap() = format!("Network hiccup, retrying ({failures})");
@@ -163,11 +135,60 @@ pub fn local_source(path: &Path, progress: &Progress) -> Result<PathBuf, String>
     out.flush().map_err(|e| format!("Could not write the local copy: {e}"))?;
     drop(out);
     if off != size {
-        let _ = std::fs::remove_file(&part);
         return Err("The file changed size while it was being read. Try again.".into());
     }
-    let _ = std::fs::remove_file(&target);
     std::fs::rename(&part, &target).map_err(|e| format!("Could not finish the local copy: {e}"))?;
+    part_guard.0 = None;
     crate::log::line("network file: copy complete");
     Ok(target)
+}
+
+/// Deletes the temporary local copy when dropped (does nothing for files that were loaded in place).
+pub struct TempCopy(Option<PathBuf>);
+
+impl TempCopy {
+    pub fn new(original: &Path, source: &Path) -> Self {
+        TempCopy((original != source).then(|| source.to_path_buf()))
+    }
+}
+
+impl Drop for TempCopy {
+    fn drop(&mut self) {
+        if let Some(p) = self.0.take() {
+            match std::fs::remove_file(&p) {
+                Ok(()) => crate::log::line("network file: temporary copy deleted"),
+                Err(e) => crate::log::line(&format!("network file: could not delete {}: {e}", p.display())),
+            }
+            let _ = std::fs::remove_dir(cache_dir()); // only succeeds when empty
+        }
+    }
+}
+
+/// Removes copies left behind if Forma was closed or crashed while loading. Also clears copies kept by
+/// versions before 5.1.0-alpha.2, which reused them between loads.
+pub fn clear_leftovers() {
+    let dir = cache_dir();
+    let Ok(rd) = std::fs::read_dir(&dir) else { return };
+    let mut freed = 0u64;
+    for e in rd.filter_map(|e| e.ok()) {
+        let p = e.path();
+        let ext = p.extension().and_then(|x| x.to_str()).unwrap_or("");
+        // a copy still being written by another open Forma window is left alone
+        let busy = ext == "part" && e.metadata().and_then(|m| m.modified()).map(|t| t.elapsed().map(|d| d.as_secs() < 120).unwrap_or(true)).unwrap_or(false);
+        if (ext == "obj" || ext == "part") && !busy {
+            let len = e.metadata().map(|m| m.len()).unwrap_or(0);
+            if std::fs::remove_file(&p).is_ok() {
+                freed += len;
+            }
+        }
+    }
+    let _ = std::fs::remove_dir(&dir);
+    if freed > 0 {
+        crate::log::line(&format!("cleared {} of leftover network copies", crate::log::gb(freed)));
+    }
+}
+
+/// Number of files currently in the cache folder (used by the self-test).
+pub fn leftover_count() -> usize {
+    std::fs::read_dir(cache_dir()).map(|rd| rd.count()).unwrap_or(0)
 }

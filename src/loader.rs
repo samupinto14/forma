@@ -319,6 +319,9 @@ pub fn load(path: &Path, progress: &Progress, tex: TexLimit, proxy_tris: u64) ->
     let t0 = std::time::Instant::now();
     // network files are copied locally first (see netcache.rs); mapping them directly can crash on a drop-out
     let source = crate::netcache::local_source(path, progress)?;
+    // the temporary copy is deleted as soon as loading ends, whether it worked, failed or stopped unexpectedly;
+    // declared before the file and its mapping so it is dropped after them
+    let _temp = crate::netcache::TempCopy::new(path, &source);
     progress.done.store(0, Ordering::Relaxed);
     let file = std::fs::File::open(&source).map_err(|e| format!("Could not open the file: {e}"))?;
     let mmap = unsafe { memmap2::Mmap::map(&file) }.map_err(|e| format!("Could not read the file: {e}"))?;

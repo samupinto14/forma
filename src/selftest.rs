@@ -43,6 +43,11 @@ pub fn run(obj: &str, out: &str) -> Result<(), String> {
 
     let progress = Progress::default();
     let mut data = loader::load(Path::new(obj), &progress, loader::TexLimit { budget: std::env::var("FORMA_TEX_BUDGET").ok().and_then(|v| v.parse().ok()), ..Default::default() }, 1_500_000)?;
+    report += &format!("cache files left after load: {}\n", crate::netcache::leftover_count());
+    if std::env::var_os("FORMA_FORCE_CACHE").is_some() && crate::netcache::leftover_count() > 0 {
+        let _ = std::fs::write(format!("{out}_report.txt"), &report);
+        return Err("the temporary network copy was not deleted".into());
+    }
     let st = &data.stats;
     report += &format!(
         "file: {} ({} bytes)\nload: {:.2} s\ntriangles: {}\nvertices: {}\ngpu vertices: {}\npieces: {}\nuvs: {} normals: {}\ndegenerate: {} invalid: {}\npieces without uv: {}\nmaterials: {}\n",
