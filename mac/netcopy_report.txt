@@ -1,0 +1,22 @@
+found adapter: Apple Paravirtual device (Metal, IntegratedGpu)
+adapter: Apple Paravirtual device (Metal, IntegratedGpu)
+cache files left after load: 0
+file: terrain.obj (418568642 bytes)
+load: 2.72 s
+triangles: 7597202
+vertices: 3802500
+gpu vertices: 3827863
+pieces: 14
+uvs: 3802500 normals: 0
+degenerate: 0 invalid: 0
+pieces without uv: 0
+materials: 1
+  material '' kd=[0.8, 0.8, 0.8] texture=None 
+up axis: Some([0.0, 1.0, 0.0])
+light version: 1625668 triangles
+upload: 0.96 s, geometry 198346588 bytes, textures 0 bytes
+render grey: 137 ms
+render textured: 27 ms
+render checker: 18 ms
+render normals: 18 ms
+render shape: 16 ms

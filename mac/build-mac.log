@@ -1,0 +1,23 @@
+info: component rust-std is up to date
+info: component rust-std for target x86_64-apple-darwin is up to date
+[1m[92m    Updating[0m crates.io index
+[1m[92m     Locking[0m 436 packages to highest compatible versions
+[1m[92m      Adding[0m eframe v0.29.1 [1m[33m(available: v0.37.0)[0m
+[1m[92m      Adding[0m generic-array v0.14.7 [1m[33m(available: v0.14.9)[0m
+[1m[92m      Adding[0m glam v0.29.3 [1m[33m(available: v0.34.2)[0m
+[1m[92m      Adding[0m pollster v0.3.0 [1m[33m(available: v1.0.1)[0m
+[1m[92m      Adding[0m rfd v0.15.4 [1m[33m(available: v0.17.2)[0m
+[1m[92m      Adding[0m windows-sys v0.59.0 [1m[33m(available: v0.61.2)[0m
+[1m[92m   Compiling[0m forma v5.1.0-alpha.2 (/Users/runner/work/forma/forma)
+[1m[92m    Finished[0m `release` profile [optimized] target(s) in 47.30s
+[1m[33mwarning[0m: the following packages contain code that will be rejected by a future version of Rust: block v0.1.6
+[1m[92mnote[0m: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+[1m[92m   Compiling[0m forma v5.1.0-alpha.2 (/Users/runner/work/forma/forma)
+[1m[92m    Finished[0m `release` profile [optimized] target(s) in 44.04s
+[1m[33mwarning[0m: the following packages contain code that will be rejected by a future version of Rust: block v0.1.6
+[1m[92mnote[0m: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+dist/Forma.app: replacing existing signature
+dist/Forma.app: valid on disk
+dist/Forma.app: satisfies its Designated Requirement
+created: /Users/runner/work/forma/forma/dist/Forma.dmg
+Architectures in the fat file: dist/Forma.app/Contents/MacOS/forma are: x86_64 arm64 

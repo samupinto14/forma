@@ -1,0 +1,82 @@
+[1793896246] stage: Scanning
+[1793896246] load tests/test_asset.obj: 7898 bytes, 104 v, 100 vt, 6 vn, 104 faces, ~110 tris, estimated peak 0.3 GB, memory Some(("13.1 GB", "17.5 GB", "17.2 GB"))
+[1793896246] stage: Reading vertices
+[1793896246] stage: Building mesh
+[1793896246] faces built in 0.0 s
+[1793896246] up axis from surfaces: None (facing sum [0.0, 0.0, 0.0], total 5.977e1)
+[1793896246] stage: Computing normals
+[1793896246] stage: Building light version for moving
+[1793896246] light version: 0 triangles
+[1793896246] stage: Loading textures
+[1793896246] textures: 2 files, full size 0.0 GB, loading at 1/1 (0.0 GB)
+[1793896247] network file: copying 429972243 bytes to C:\Users\runneradmin\AppData\Local\Forma\cache\forma-1176-0.obj
+[1793896249] network file: copy complete
+[1793896249] stage: Scanning
+[1793896249] load tests/terrain.obj: 429972243 bytes, 3802500 v, 3802500 vt, 0 vn, 3798601 faces, ~7597202 tris, estimated peak 0.6 GB, memory Some(("12.7 GB", "17.5 GB", "17.2 GB"))
+[1793896249] stage: Reading vertices
+[1793896249] stage: Building mesh
+[1793896250] faces built in 2.9 s
+[1793896250] up axis from surfaces: Some([0.0, 1.0, 0.0]) (facing sum [-0.23998483385870628, 759.720173976486, 0.38374095304968137], total 9.314e2)
+[1793896250] stage: Computing normals
+[1793896250] stage: Building light version for moving
+[1793896250] light version: 1625668 triangles
+[1793896250] stage: Loading textures
+[1793896250] textures: 0 files, full size 0.0 GB, loading at 1/1 (0.0 GB)
+[1793896250] network file: temporary copy deleted
+[1793896331] network file: copying 429972243 bytes to C:\Users\runneradmin\AppData\Local\Forma\cache\forma-7640-0.obj
+[1793896332] network file: copy complete
+[1793896332] stage: Scanning
+[1793896333] load tests/terrain.obj: 429972243 bytes, 3802500 v, 3802500 vt, 0 vn, 3798601 faces, ~7597202 tris, estimated peak 0.6 GB, memory Some(("13.8 GB", "17.5 GB", "17.2 GB"))
+[1793896333] stage: Reading vertices
+[1793896333] stage: Building mesh
+[1793896333] faces built in 2.5 s
+[1793896333] up axis from surfaces: Some([0.0, 1.0, 0.0]) (facing sum [-0.23998483385870628, 759.720173976486, 0.38374095304968137], total 9.314e2)
+[1793896333] stage: Computing normals
+[1793896333] stage: Building light version for moving
+[1793896334] light version: 1625668 triangles
+[1793896334] stage: Loading textures
+[1793896334] textures: 0 files, full size 0.0 GB, loading at 1/1 (0.0 GB)
+[1793896334] network file: temporary copy deleted
+[1793896415] stage: Scanning
+[1793896415] load tests/test_asset.obj: 7898 bytes, 104 v, 100 vt, 6 vn, 104 faces, ~110 tris, estimated peak 0.3 GB, memory Some(("14.3 GB", "17.5 GB", "17.2 GB"))
+[1793896415] stage: Reading vertices
+[1793896415] stage: Building mesh
+[1793896415] faces built in 0.0 s
+[1793896415] up axis from surfaces: None (facing sum [0.0, 0.0, 0.0], total 5.977e1)
+[1793896415] stage: Computing normals
+[1793896415] stage: Building light version for moving
+[1793896415] light version: 0 triangles
+[1793896415] stage: Loading textures
+[1793896415] textures: 2 files, full size 0.0 GB, loading at 1/1 (0.0 GB)
+[1793896416] stage: Scanning
+[1793896416] load tests/blob.obj: 41656280 bytes, 200500 v, 200500 vt, 200500 vn, 400000 faces, ~400000 tris, estimated peak 0.3 GB, memory Some(("14.2 GB", "17.5 GB", "17.2 GB"))
+[1793896416] stage: Reading vertices
+[1793896416] stage: Building mesh
+[1793896416] faces built in 0.1 s
+[1793896416] up axis from surfaces: None (facing sum [0.0, -7.656353773199953e-9, 0.0], total 6.716e1)
+[1793896416] stage: Building light version for moving
+[1793896416] light version: 0 triangles
+[1793896416] stage: Loading textures
+[1793896416] textures: 0 files, full size 0.0 GB, loading at 1/1 (0.0 GB)
+[1793896425] stage: Scanning
+[1793896426] load tests/terrain.obj: 429972243 bytes, 3802500 v, 3802500 vt, 0 vn, 3798601 faces, ~7597202 tris, estimated peak 0.6 GB, memory Some(("13.8 GB", "17.5 GB", "17.2 GB"))
+[1793896426] stage: Reading vertices
+[1793896426] stage: Building mesh
+[1793896426] faces built in 1.0 s
+[1793896426] up axis from surfaces: Some([0.0, 1.0, 0.0]) (facing sum [-0.23998483385870628, 759.720173976486, 0.38374095304968137], total 9.314e2)
+[1793896426] stage: Computing normals
+[1793896427] stage: Building light version for moving
+[1793896427] light version: 1625668 triangles
+[1793896427] stage: Loading textures
+[1793896427] textures: 0 files, full size 0.0 GB, loading at 1/1 (0.0 GB)
+[1793896508] stage: Scanning
+[1793896508] load tests/udim.obj: 3941 bytes, 120 v, 120 vt, 0 vn, 30 faces, ~60 tris, estimated peak 0.3 GB, memory Some(("14.3 GB", "17.5 GB", "17.2 GB"))
+[1793896508] stage: Reading vertices
+[1793896508] stage: Building mesh
+[1793896508] faces built in 0.0 s
+[1793896508] up axis from surfaces: Some([0.0, 1.0, 0.0]) (facing sum [0.0, 60.0, 0.0], total 6.000e1)
+[1793896508] stage: Computing normals
+[1793896508] stage: Building light version for moving
+[1793896508] light version: 0 triangles
+[1793896508] stage: Loading textures
+[1793896508] textures: 30 files, full size 2.7 GB, loading at 1/4 (0.2 GB)

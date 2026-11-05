@@ -1,0 +1,24 @@
+found adapter: Apple Paravirtual device (Metal, IntegratedGpu)
+adapter: Apple Paravirtual device (Metal, IntegratedGpu)
+cache files left after load: 0
+file: test_asset.obj (7898 bytes)
+load: 0.01 s
+triangles: 109
+vertices: 104
+gpu vertices: 136
+pieces: 9
+uvs: 100 normals: 6
+degenerate: 1 invalid: 1
+pieces without uv: 0
+materials: 3
+  material '' kd=[0.8, 0.8, 0.8] texture=None 
+  material 'body' kd=[1.0, 1.0, 1.0] texture=Some("textures/body_diffuse.png") 512x512 10 mips
+  material 'base' kd=[0.8, 0.8, 0.8] texture=Some("base_rough.tga") 256x256 9 mips
+up axis: None
+light version: 0 triangles
+upload: 0.14 s, geometry 5116 bytes, textures 1747624 bytes
+render grey: 128 ms
+render textured: 10 ms
+render checker: 4 ms
+render normals: 7 ms
+render shape: 10 ms

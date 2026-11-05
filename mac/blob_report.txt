@@ -1,0 +1,22 @@
+found adapter: Apple Paravirtual device (Metal, IntegratedGpu)
+adapter: Apple Paravirtual device (Metal, IntegratedGpu)
+cache files left after load: 0
+file: blob.obj (40654780 bytes)
+load: 0.16 s
+triangles: 400000
+vertices: 200500
+gpu vertices: 207532
+pieces: 15
+uvs: 200500 normals: 200500
+degenerate: 1000 invalid: 0
+pieces without uv: 0
+materials: 1
+  material '' kd=[0.8, 0.8, 0.8] texture=None 
+up axis: None
+light version: 0 triangles
+upload: 0.09 s, geometry 10610896 bytes, textures 0 bytes
+render grey: 103 ms
+render textured: 13 ms
+render checker: 10 ms
+render normals: 5 ms
+render shape: 6 ms

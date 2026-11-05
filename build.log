@@ -1,0 +1,10 @@
+    Updating crates.io index
+     Locking 436 packages to highest compatible versions
+      Adding eframe v0.29.1 (available: v0.37.0)
+      Adding generic-array v0.14.7 (available: v0.14.9)
+      Adding glam v0.29.3 (available: v0.34.2)
+      Adding pollster v0.3.0 (available: v1.0.1)
+      Adding rfd v0.15.4 (available: v0.17.2)
+      Adding windows-sys v0.59.0 (available: v0.61.2)
+   Compiling forma v5.1.0-alpha.2 (D:\a\forma\forma)
+    Finished `release` profile [optimized] target(s) in 1m 46s

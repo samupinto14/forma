@@ -1,0 +1,5 @@
+netcopy exit 0
+test_asset exit 0
+blob exit 0
+terrain exit 0
+udim exit 0
