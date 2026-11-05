@@ -32,13 +32,22 @@ jobs:
           # build machines have no graphics card: run the test copy with Mesa's software OpenGL next to it
           New-Item -ItemType Directory -Force cirun | Out-Null
           Copy-Item target/release/forma.exe cirun/forma.exe
-          $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/pal1000/mesa-dist-win/releases/latest" -Headers @{ "User-Agent" = "forma-ci" }
-          $asset = $rel.assets | Where-Object { $_.name -like "*release-msvc.7z" } | Select-Object -First 1
-          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile mesa.7z
-          7z x mesa.7z -omesa -y | Out-Null
-          Copy-Item mesa/x64/*.dll cirun/
-          "mesa: $($asset.name)" | Add-Content ci/selftest.txt
+          # newest Mesa first; if a release doesn't give us an adapter, try the one before it
           $env:GALLIUM_DRIVER = "llvmpipe"
+          $rels = Invoke-RestMethod -Uri "https://api.github.com/repos/pal1000/mesa-dist-win/releases?per_page=5" -Headers @{ "User-Agent" = "forma-ci" }
+          foreach ($rel in $rels) {
+            $asset = $rel.assets | Where-Object { $_.name -like "*release-msvc.7z" } | Select-Object -First 1
+            if (-not $asset) { continue }
+            Remove-Item -Recurse -Force mesa, mesa.7z -ErrorAction SilentlyContinue
+            Invoke-WebRequest -Uri $asset.browser_download_url -OutFile mesa.7z
+            7z x mesa.7z -omesa -y | Out-Null
+            Copy-Item mesa/x64/*.dll cirun/ -Force
+            $p = Start-Process -FilePath (Resolve-Path cirun/forma.exe).Path -ArgumentList @('--selftest', "tests/test_asset.obj", "ci/probe") -Wait -PassThru -NoNewWindow
+            "mesa: $($asset.name) probe exit $($p.ExitCode)" | Add-Content ci/selftest.txt
+            if ($p.ExitCode -eq 0) { break }
+            Get-ChildItem cirun -Filter *.dll | Remove-Item -Force
+          }
+          Remove-Item ci/probe_* -ErrorAction SilentlyContinue
           $exe = (Resolve-Path cirun/forma.exe).Path
           # the network-copy path, forced on a local file
           $env:FORMA_FORCE_CACHE = '1'
